@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Request } from 'express';
-import { bearerToken } from '../common/request-util';
+import { authToken } from '../common/request-util';
 import { AdminServiceClient } from '../integration/admin/admin-service.client';
 import { IS_PUBLIC_KEY } from './public.decorator';
 import { REQUIRED_PERMISSION_KEY } from './require-permission.decorator';
@@ -34,7 +34,7 @@ export class AuthGuard implements CanActivate {
       throw new ForbiddenException('허용되지 않은 요청 방식입니다.');
     }
 
-    const accessToken = bearerToken(request);
+    const accessToken = authToken(request);
     if (!accessToken) {
       throw new UnauthorizedException('로그인이 필요합니다.');
     }

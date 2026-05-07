@@ -26,6 +26,13 @@
 6. 업로드 화면은 파일의 브라우저 `lastModified` 값을 원본 생성일 기본값으로 제안한다.
 7. 사용자는 원본 촬영일/생성일이 다르면 직접 수정한다.
 
+## 화면 진입 권한
+
+- `/`, `/index.html`, `/upload.html`, `/preview.html`은 어드민 로그인 토큰이 있어야 접근할 수 있다.
+- 비로그인 사용자는 `admin-service`의 `/service-login-page.do`로 이동한다.
+- 일반 사용자는 `WEBHARD_SERVICE` 권한이 하나 이상 있어야 화면에 진입할 수 있다.
+- `ROLE_ADMIN`, `ROLE_SUPER_ADMIN`은 권한 목록 없이도 진입할 수 있다.
+
 ## API 명세
 
 ### `POST /folder/list.json`

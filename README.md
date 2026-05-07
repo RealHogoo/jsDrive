@@ -35,11 +35,13 @@
 
 `admin-service`의 `service_permissions`에서 `WEBHARD_SERVICE` 권한을 확인합니다.
 
+- 화면 진입: `WEBHARD_SERVICE` 권한 중 하나 이상 필요
 - `WRITE`: 폴더 저장, 파일 등록
 - `SHARE`: 공유 링크 생성
 - `DELETE`: 삭제 API 확장 예정
 
 관리자 역할(`ROLE_ADMIN`, `ROLE_SUPER_ADMIN`)은 서비스 권한 체크를 통과합니다.
+비로그인 사용자가 `/`, `/upload.html`, `/preview.html`에 접근하면 어드민 서비스 로그인 페이지로 이동합니다.
 
 ## 실행
 
@@ -114,9 +116,10 @@ PostgreSQL 스키마는 `docs/sql/postgres/schema.sql`에 있습니다.
 
 ## 화면
 
-- 업로드: `http://localhost:8083/assets/upload.html`
-- 미리보기: `http://localhost:8083/assets/preview.html`
+- 업로드: `http://localhost:8083/upload.html`
+- 미리보기: `http://localhost:8083/preview.html`
 
+루트 `http://localhost:8083/`는 웹하드 메인 화면입니다.
 업로드 화면은 브라우저가 제공하는 파일 `lastModified` 값을 원본 생성일 기본값으로 사용합니다.
 사진/동영상 파일의 실제 촬영일이나 생성일이 다르면 업로드 전에 원본 생성일 입력값을 수정합니다.
 미리보기 화면은 등록일이 아니라 `original_created_at` 기준으로 일별, 주별, 월별 조회합니다.

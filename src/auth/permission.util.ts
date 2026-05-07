@@ -12,6 +12,11 @@ export function hasPermission(
   return Array.isArray(items) && items.includes(normalizeCode(permissionCode));
 }
 
+export function hasAnyWebhardPermission(permissions: Record<string, string[]>): boolean {
+  const items = permissions[WEBHARD_SERVICE] || permissions['WEBHARD-SERVICE'];
+  return Array.isArray(items) && items.length > 0;
+}
+
 export function normalizeCode(value: string): string {
   return value.trim().replace(/[- ]/g, '_').toUpperCase();
 }
