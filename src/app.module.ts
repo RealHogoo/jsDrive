@@ -6,9 +6,10 @@ import { DatabaseModule } from './database/database.module';
 import { DriveModule } from './drive/drive.module';
 import { HealthModule } from './health/health.module';
 import { VersionModule } from './version/version.module';
+import { WebModule } from './web/web.module';
 
 @Module({
-  imports: [AdminModule, DatabaseModule, DriveModule, HealthModule, VersionModule],
+  imports: [AdminModule, DatabaseModule, DriveModule, HealthModule, VersionModule, WebModule],
   providers: [
     {
       provide: APP_GUARD,
