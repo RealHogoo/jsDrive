@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>웹하드 업로드</title>
+  <link rel="stylesheet" href="/assets/css/webhard.css">
+</head>
+<body>
+  <header class="topbar">
+    <strong>웹하드</strong>
+    <nav>
+      <a class="active" href="/assets/upload.html">업로드</a>
+      <a href="/assets/preview.html">미리보기</a>
+    </nav>
+  </header>
+  <main class="shell">
+    <section class="panel toolbar">
+      <label>
+        토큰
+        <input id="token" class="input" type="password" placeholder="Bearer 토큰">
+      </label>
+      <button id="saveToken" class="btn" type="button">저장</button>
+    </section>
+
+    <section class="panel">
+      <h1>파일 업로드</h1>
+      <form id="uploadForm" class="form-grid">
+        <label class="wide">
+          파일
+          <input id="file" class="input" type="file" accept="image/*,video/*" required>
+        </label>
+        <label>
+          폴더 ID
+          <input id="folderId" class="input" type="number" min="1" placeholder="선택">
+        </label>
+        <label>
+          원본 생성일
+          <input id="originalCreatedAt" class="input" type="datetime-local" required>
+        </label>
+        <div class="actions wide">
+          <button class="btn primary" type="submit">업로드</button>
+          <a class="btn" href="/assets/preview.html">미리보기로 이동</a>
+        </div>
+      </form>
+      <div id="message" class="message"></div>
+    </section>
+  </main>
+  <script src="/assets/js/webhard.js"></script>
+  <script src="/assets/js/upload.js"></script>
+</body>
+</html>

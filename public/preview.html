@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>웹하드 미리보기</title>
+  <link rel="stylesheet" href="/assets/css/webhard.css">
+</head>
+<body>
+  <header class="topbar">
+    <strong>웹하드</strong>
+    <nav>
+      <a href="/assets/upload.html">업로드</a>
+      <a class="active" href="/assets/preview.html">미리보기</a>
+    </nav>
+  </header>
+  <main class="shell">
+    <section class="panel toolbar">
+      <label>
+        토큰
+        <input id="token" class="input" type="password" placeholder="Bearer 토큰">
+      </label>
+      <button id="saveToken" class="btn" type="button">저장</button>
+    </section>
+
+    <section class="panel">
+      <div class="filters">
+        <label>
+          기간
+          <select id="periodType" class="input">
+            <option value="day">일별</option>
+            <option value="week">주별</option>
+            <option value="month">월별</option>
+          </select>
+        </label>
+        <label>
+          기준일
+          <input id="baseDate" class="input" type="date">
+        </label>
+        <label>
+          종류
+          <select id="contentKind" class="input">
+            <option value="ALL">전체</option>
+            <option value="IMAGE">사진</option>
+            <option value="VIDEO">동영상</option>
+          </select>
+        </label>
+        <button id="search" class="btn primary" type="button">조회</button>
+      </div>
+      <div id="summary" class="summary"></div>
+      <div id="previewGrid" class="preview-grid"></div>
+    </section>
+  </main>
+  <script src="/assets/js/webhard.js"></script>
+  <script src="/assets/js/preview.js"></script>
+</body>
+</html>

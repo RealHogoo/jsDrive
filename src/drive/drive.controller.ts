@@ -1,4 +1,5 @@
-import { Body, Controller, Post, Req } from '@nestjs/common';
+import { Body, Controller, Post, Req, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { Request } from 'express';
 import { RequirePermission } from '../auth/require-permission.decorator';
 import { ok } from '../common/api-response';
@@ -29,6 +30,22 @@ export class DriveController {
   @Post('file/register.json')
   async registerFile(@Body() body: Record<string, unknown>, @Req() request: Request) {
     return ok(await this.driveService.registerFile(body, viewer(request)), traceId(request));
+  }
+
+  @RequirePermission('WRITE')
+  @Post('file/upload.json')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 1024 * 1024 * 1024 } }))
+  async uploadFile(
+    @Body() body: Record<string, unknown>,
+    @UploadedFile() file: Express.Multer.File,
+    @Req() request: Request,
+  ) {
+    return ok(await this.driveService.uploadFile(body, file, viewer(request)), traceId(request));
+  }
+
+  @Post('preview/list.json')
+  async previewList(@Body() body: Record<string, unknown> = {}, @Req() request: Request) {
+    return ok(await this.driveService.previewList(body, viewer(request)), traceId(request));
   }
 
   @RequirePermission('SHARE')

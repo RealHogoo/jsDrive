@@ -11,7 +11,9 @@
 - 폴더 생성/수정
 - 파일 목록 조회
 - 파일 메타데이터 등록
+- 사진/동영상 파일 업로드
 - 파일 또는 폴더 공유 링크 생성
+- 원본 생성일 기준 일별/주별/월별 미리보기
 - 어드민 서비스 JWT/권한 연동
 
 ## 화면 흐름
@@ -21,6 +23,8 @@
 3. 웹하드 서비스는 어드민 `/auth/me.json`으로 사용자를 확인한다.
 4. 목록 API는 본인 소유 데이터만 조회한다.
 5. 저장/공유 API는 `WEBHARD_SERVICE` 권한을 추가로 확인한다.
+6. 업로드 화면은 파일의 브라우저 `lastModified` 값을 원본 생성일 기본값으로 제안한다.
+7. 사용자는 원본 촬영일/생성일이 다르면 직접 수정한다.
 
 ## API 명세
 
@@ -87,6 +91,33 @@
   "storage_path": "/volume1/webhard/sample.pdf"
 }
 ```
+
+### `POST /file/upload.json`
+
+권한: `WEBHARD_SERVICE.WRITE`
+
+요청: `multipart/form-data`
+
+| 필드 | 설명 |
+| --- | --- |
+| `file` | 사진 또는 동영상 파일 |
+| `folder_id` | 선택 폴더 ID |
+| `original_created_at` | 원본 생성일 ISO datetime |
+
+### `POST /preview/list.json`
+
+요청:
+
+```json
+{
+  "period_type": "day",
+  "base_date": "2026-05-08",
+  "content_kind": "ALL"
+}
+```
+
+`period_type`은 `day`, `week`, `month`를 지원한다.
+조회 범위는 등록일이 아니라 `wh_file.original_created_at` 기준이다.
 
 ### `POST /share/create.json`
 

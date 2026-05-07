@@ -20,8 +20,11 @@
 - 파일
   - `POST /file/list.json`
   - `POST /file/register.json`
+  - `POST /file/upload.json`
 - 공유
   - `POST /share/create.json`
+- 미리보기
+  - `POST /preview/list.json`
 - 운영
   - `POST /version.json`
   - `POST /health/live.json`
@@ -98,6 +101,7 @@ $env:WEBHARD_DB_PASSWORD="postgres"
 ## DB
 
 PostgreSQL 스키마는 `docs/sql/postgres/schema.sql`에 있습니다.
+원본 생성일 기준 미리보기 메타데이터 추가 SQL은 `docs/sql/postgres/deploy-add-preview-metadata.sql`입니다.
 
 어드민 서비스 등록 SQL은 `docs/sql/postgres/admin-service-registration.sql`에 있습니다.
 운영 반영 시 `admin-service` DB에 먼저 적용해야 권한 화면과 `/auth/me.json`에서 웹하드 권한을 사용할 수 있습니다.
@@ -107,3 +111,12 @@ PostgreSQL 스키마는 `docs/sql/postgres/schema.sql`에 있습니다.
 - 웹하드 설계: [docs/webhard/webhard.md](docs/webhard/webhard.md)
 - PostgreSQL 스키마: [docs/sql/postgres/schema.sql](docs/sql/postgres/schema.sql)
 - 어드민 등록 SQL: [docs/sql/postgres/admin-service-registration.sql](docs/sql/postgres/admin-service-registration.sql)
+
+## 화면
+
+- 업로드: `http://localhost:8083/assets/upload.html`
+- 미리보기: `http://localhost:8083/assets/preview.html`
+
+업로드 화면은 브라우저가 제공하는 파일 `lastModified` 값을 원본 생성일 기본값으로 사용합니다.
+사진/동영상 파일의 실제 촬영일이나 생성일이 다르면 업로드 전에 원본 생성일 입력값을 수정합니다.
+미리보기 화면은 등록일이 아니라 `original_created_at` 기준으로 일별, 주별, 월별 조회합니다.

@@ -21,13 +21,17 @@ CREATE TABLE IF NOT EXISTS wh_file (
     file_name     VARCHAR(255) NOT NULL,
     file_size     BIGINT NOT NULL DEFAULT 0,
     content_type  VARCHAR(200) NOT NULL DEFAULT 'application/octet-stream',
+    content_kind  VARCHAR(20) NOT NULL DEFAULT 'OTHER',
     storage_path  VARCHAR(1000) NOT NULL,
+    public_path   VARCHAR(1000),
+    original_created_at TIMESTAMP,
     deleted_yn    CHAR(1) NOT NULL DEFAULT 'N',
     created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     created_by    VARCHAR(100) NOT NULL,
     updated_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_by    VARCHAR(100) NOT NULL,
     CONSTRAINT fk_wh_file_folder FOREIGN KEY (folder_id) REFERENCES wh_folder (folder_id),
+    CONSTRAINT ck_wh_file_kind CHECK (content_kind IN ('IMAGE', 'VIDEO', 'OTHER')),
     CONSTRAINT ck_wh_file_deleted CHECK (deleted_yn IN ('Y', 'N'))
 );
 
@@ -54,6 +58,9 @@ CREATE INDEX IF NOT EXISTS idx_wh_folder_01
 
 CREATE INDEX IF NOT EXISTS idx_wh_file_01
     ON wh_file (owner_user_id, folder_id, deleted_yn, file_name);
+
+CREATE INDEX IF NOT EXISTS idx_wh_file_02
+    ON wh_file (owner_user_id, original_created_at, content_kind, deleted_yn);
 
 CREATE INDEX IF NOT EXISTS idx_wh_share_01
     ON wh_share (share_token, revoked_yn, expires_at);
