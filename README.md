@@ -58,6 +58,43 @@ npm run start:dev
 
 로컬 개발 장비에 Node.js/npm이 필요합니다.
 
+## Node 자동 설치 실행
+
+운영 서버에 Node.js가 없어도 `scripts/run-service.sh`가 `.runtime` 아래에 Node.js를 자동으로 내려받고 실행합니다.
+
+Linux/NAS:
+
+```sh
+export APP_ENV=prod
+export SERVICE_ID=webhard-service
+export PORT=8083
+export ADMIN_SERVICE_BASE_URL=http://localhost:8081
+export WEBHARD_DB_HOST=localhost
+export WEBHARD_DB_PORT=5432
+export WEBHARD_DB_DATABASE=webhard
+export WEBHARD_DB_USERNAME=postgres
+export WEBHARD_DB_PASSWORD=postgres
+sh scripts/run-service.sh
+```
+
+Windows 로컬:
+
+```powershell
+$env:APP_ENV="dev"
+$env:SERVICE_ID="webhard-service"
+$env:PORT="8083"
+$env:ADMIN_SERVICE_BASE_URL="http://localhost:8081"
+$env:WEBHARD_DB_HOST="localhost"
+$env:WEBHARD_DB_PORT="5432"
+$env:WEBHARD_DB_DATABASE="webhard"
+$env:WEBHARD_DB_USERNAME="postgres"
+$env:WEBHARD_DB_PASSWORD="postgres"
+.\scripts\run-service.ps1
+```
+
+기본 Node 버전은 `v22.13.1`입니다. 운영에서 다른 버전을 쓰려면 `NODE_VERSION` 환경변수로 바꿀 수 있습니다.
+처음 실행 시에는 Node 다운로드, `npm install`, `npm run build`가 수행됩니다.
+
 ## DB
 
 PostgreSQL 스키마는 `docs/sql/postgres/schema.sql`에 있습니다.
