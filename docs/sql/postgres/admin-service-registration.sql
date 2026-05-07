@@ -1,6 +1,6 @@
 INSERT INTO adm_service_mst (
     service_seq, service_cd, service_nm, base_url, status_path, live_path, ready_path,
-    timeout_ms, use_yn, sort_ord, description, created_by, updated_by
+    timeout_ms, use_yn, sort_ord, remark, created_by, updated_by
 )
 SELECT COALESCE((SELECT MAX(service_seq) + 1 FROM adm_service_mst), 1),
        'webhard-service', 'Webhard Service', 'http://localhost:8083',
