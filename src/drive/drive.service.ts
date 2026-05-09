@@ -5,6 +5,7 @@ import { extname, join } from 'path';
 import { ApiException } from '../common/api-exception';
 import { safePathSegment, storageRoot } from '../common/storage-path';
 import { DatabaseService } from '../database/database.service';
+import { IndexingService } from './indexing.service';
 
 export interface Viewer {
   userId: string;
@@ -13,7 +14,10 @@ export interface Viewer {
 
 @Injectable()
 export class DriveService {
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly indexingService: IndexingService,
+  ) {}
 
   async folderList(params: Record<string, unknown>, viewer: Viewer): Promise<Record<string, unknown>> {
     const parentFolderId = optionalNumber(params.parent_folder_id, 'parent_folder_id');
@@ -86,6 +90,7 @@ export class DriveService {
   }
 
   async registerFile(params: Record<string, unknown>, viewer: Viewer): Promise<Record<string, unknown>> {
+    await this.indexingService.ensureNotRunning(viewer);
     const folderId = optionalNumber(params.folder_id, 'folder_id');
     const fileName = requiredText(params.file_name, 'file_name is required');
     const storagePath = requiredText(params.storage_path, 'storage_path is required');
@@ -114,6 +119,7 @@ export class DriveService {
     file: Express.Multer.File | undefined,
     viewer: Viewer,
   ): Promise<Record<string, unknown>> {
+    await this.indexingService.ensureNotRunning(viewer);
     if (!file) {
       throw ApiException.badRequest('file is required');
     }

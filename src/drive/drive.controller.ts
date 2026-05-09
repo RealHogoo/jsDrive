@@ -5,10 +5,14 @@ import { RequirePermission } from '../auth/require-permission.decorator';
 import { ok } from '../common/api-response';
 import { traceId } from '../common/request-util';
 import { DriveService } from './drive.service';
+import { IndexingService } from './indexing.service';
 
 @Controller()
 export class DriveController {
-  constructor(private readonly driveService: DriveService) {}
+  constructor(
+    private readonly driveService: DriveService,
+    private readonly indexingService: IndexingService,
+  ) {}
 
   @Post('folder/list.json')
   async folderList(@Body() body: Record<string, unknown> = {}, @Req() request: Request) {
@@ -52,6 +56,17 @@ export class DriveController {
   @Post('share/create.json')
   async createShare(@Body() body: Record<string, unknown>, @Req() request: Request) {
     return ok(await this.driveService.createShare(body, viewer(request)), traceId(request));
+  }
+
+  @RequirePermission('WRITE')
+  @Post('index/start.json')
+  async startIndex(@Req() request: Request) {
+    return ok(await this.indexingService.start(viewer(request)), traceId(request));
+  }
+
+  @Post('index/status.json')
+  async indexStatus(@Req() request: Request) {
+    return ok(await this.indexingService.status(viewer(request)), traceId(request));
   }
 }
 

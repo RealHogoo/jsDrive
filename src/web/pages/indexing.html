@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>웹하드 인덱싱</title>
+  <link rel="stylesheet" href="/assets/css/webhard.css">
+</head>
+<body>
+  <header class="topbar">
+    <strong>웹하드</strong>
+    <nav>
+      <a href="/upload.html">업로드</a>
+      <a href="/preview.html">미리보기</a>
+      <a class="active" href="/indexing.html">인덱싱</a>
+    </nav>
+  </header>
+  <main class="shell">
+    <section class="panel">
+      <h1>NAS 파일 인덱싱</h1>
+      <p>계정별 저장 루트에 이미 있는 사진과 동영상을 찾아 미리보기 목록에 등록합니다.</p>
+      <div class="actions">
+        <button id="startIndex" class="btn primary" type="button">인덱싱 시작</button>
+        <button id="refreshStatus" class="btn" type="button">상태 새로고침</button>
+      </div>
+      <div id="indexMessage" class="message"></div>
+    </section>
+
+    <section class="panel">
+      <h2>진행 상태</h2>
+      <div class="progress-wrap">
+        <div id="progressBar" class="progress-bar"></div>
+      </div>
+      <dl class="status-list">
+        <div><dt>상태</dt><dd id="statusCd">-</dd></div>
+        <div><dt>전체</dt><dd id="totalCount">0</dd></div>
+        <div><dt>등록</dt><dd id="indexedCount">0</dd></div>
+        <div><dt>건너뜀</dt><dd id="skippedCount">0</dd></div>
+        <div><dt>오류</dt><dd id="errorCount">0</dd></div>
+        <div><dt>메시지</dt><dd id="jobMessage">-</dd></div>
+      </dl>
+    </section>
+  </main>
+  <script src="/assets/js/webhard.js"></script>
+  <script src="/assets/js/indexing.js"></script>
+</body>
+</html>

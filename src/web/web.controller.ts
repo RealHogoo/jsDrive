@@ -35,10 +35,16 @@ export class WebController {
     await this.renderProtectedPage(request, response, 'preview.html');
   }
 
+  @Public()
+  @Get('indexing.html')
+  async indexing(@Req() request: Request, @Res() response: Response): Promise<void> {
+    await this.renderProtectedPage(request, response, 'indexing.html');
+  }
+
   private async renderProtectedPage(
     request: Request,
     response: Response,
-    pageName: 'index.html' | 'upload.html' | 'preview.html',
+    pageName: 'index.html' | 'upload.html' | 'preview.html' | 'indexing.html',
   ): Promise<void> {
     const token = authToken(request);
     if (!token) {

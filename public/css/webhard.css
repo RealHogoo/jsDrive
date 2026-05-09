@@ -164,6 +164,45 @@ label {
   background: #f8fafc;
 }
 
+.progress-wrap {
+  height: 14px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: #e5e7eb;
+  margin-top: 14px;
+}
+
+.progress-bar {
+  width: 0;
+  height: 100%;
+  background: #2563eb;
+  transition: width 0.2s ease;
+}
+
+.status-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  margin: 16px 0 0;
+}
+
+.status-list div {
+  border: 1px solid #dbe2ef;
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.status-list dt {
+  color: #64748b;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.status-list dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 720px) {
   .shell {
     padding: 14px;
