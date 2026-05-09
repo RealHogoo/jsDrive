@@ -57,6 +57,7 @@ $env:WEBHARD_DB_PORT="5432"
 $env:WEBHARD_DB_DATABASE="webhard"
 $env:WEBHARD_DB_USERNAME="postgres"
 $env:WEBHARD_DB_PASSWORD="postgres"
+$env:WEBHARD_STORAGE_ROOT="D:\webhard-storage"
 npm install
 npm run start:dev
 ```
@@ -79,7 +80,14 @@ export WEBHARD_DB_PORT=5432
 export WEBHARD_DB_DATABASE=webhard
 export WEBHARD_DB_USERNAME=postgres
 export WEBHARD_DB_PASSWORD=postgres
+export WEBHARD_STORAGE_ROOT=/volume1/webhard
 sh scripts/run-service.sh
+```
+
+인자로 넘길 수도 있습니다.
+
+```sh
+sh scripts/run-service.sh --storage-root=/volume1/webhard --port=8083
 ```
 
 Windows 로컬:
@@ -94,11 +102,45 @@ $env:WEBHARD_DB_PORT="5432"
 $env:WEBHARD_DB_DATABASE="webhard"
 $env:WEBHARD_DB_USERNAME="postgres"
 $env:WEBHARD_DB_PASSWORD="postgres"
-.\scripts\run-service.ps1
+.\scripts\run-service.ps1 -StorageRoot "D:\webhard-storage" -Port "8083"
 ```
 
 기본 Node 버전은 `v22.13.1`입니다. 운영에서 다른 버전을 쓰려면 `NODE_VERSION` 환경변수로 바꿀 수 있습니다.
 처음 실행 시에는 Node 다운로드, `npm install`, `npm run build`가 수행됩니다.
+
+## 저장소 루트와 계정별 폴더
+
+파일 저장 루트는 `WEBHARD_STORAGE_ROOT`로 지정합니다.
+지정하지 않으면 서비스 디렉터리의 `storage` 폴더를 사용합니다.
+
+업로드 파일은 로그인 계정별로 분리됩니다.
+
+```text
+<WEBHARD_STORAGE_ROOT>/
+  <login_id>/
+    yyyy/
+      mm/
+        dd/
+          <uuid>.<ext>
+```
+
+예시:
+
+```text
+/volume1/webhard/ADMIN/2026/05/10/4c4c2e9d-...jpg
+```
+
+## NAS 마운트 파일
+
+NAS 디렉터리를 서버에 마운트하고 `WEBHARD_STORAGE_ROOT`로 지정하면 새로 업로드되는 파일은 그 경로에 저장됩니다.
+다만 이미 NAS에 있던 과거 파일은 파일시스템에만 존재하고 `wh_file` 메타데이터가 없기 때문에 현재 화면에는 자동으로 나오지 않습니다.
+
+과거 파일을 보려면 다음 중 하나가 필요합니다.
+
+- 파일 경로, 크기, MIME 타입, 원본 생성일을 `wh_file`에 등록하는 스캔/인덱싱 기능
+- 또는 `POST /file/register.json`으로 기존 파일을 하나씩 메타데이터 등록
+
+사진/동영상의 실제 촬영일은 파일 수정일과 다를 수 있습니다. 정확한 원본 생성일 기준 미리보기를 하려면 추후 EXIF/동영상 메타데이터를 읽는 스캐너를 추가하는 것이 맞습니다.
 
 ## DB
 

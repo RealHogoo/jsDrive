@@ -147,6 +147,19 @@
 
 상세 SQL은 `docs/sql/postgres/schema.sql`을 기준으로 한다.
 
+## 저장소 루트
+
+서비스 실행 시 `WEBHARD_STORAGE_ROOT`로 파일 저장 루트를 지정한다.
+업로드 파일은 로그인 계정별 폴더 아래에 저장한다.
+
+```text
+<WEBHARD_STORAGE_ROOT>/<login_id>/yyyy/mm/dd/<uuid>.<ext>
+```
+
+NAS 디렉터리를 마운트한 뒤 `WEBHARD_STORAGE_ROOT`로 지정하면 신규 업로드는 NAS에 저장된다.
+기존 NAS 파일은 DB 메타데이터가 없으면 화면에 표시되지 않는다.
+기존 파일까지 보려면 NAS 경로를 스캔해서 `wh_file`에 등록하는 인덱싱 기능이 필요하다.
+
 ## 예외/에러 케이스
 
 - JWT 없음: `UNAUTHORIZED`

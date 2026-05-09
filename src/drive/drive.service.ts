@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import { mkdir, writeFile } from 'fs/promises';
 import { extname, join } from 'path';
 import { ApiException } from '../common/api-exception';
+import { safePathSegment, storageRoot } from '../common/storage-path';
 import { DatabaseService } from '../database/database.service';
 
 export interface Viewer {
@@ -124,7 +125,7 @@ export class DriveService {
       throw ApiException.badRequest('only image and video files can be uploaded');
     }
 
-    const stored = await saveUploadedFile(file, originalCreatedAt);
+    const stored = await saveUploadedFile(file, originalCreatedAt, viewer.userId);
     const result = await this.databaseService.query<{ file_id: number }>(
       `
       INSERT INTO wh_file (
@@ -321,20 +322,22 @@ function periodRange(periodType: 'day' | 'week' | 'month', baseDate: string): { 
 async function saveUploadedFile(
   file: Express.Multer.File,
   originalCreatedAt: string,
+  ownerUserId: string,
 ): Promise<{ storagePath: string; publicPath: string }> {
-  const root = process.env.WEBHARD_STORAGE_DIR || 'storage';
+  const root = storageRoot();
+  const ownerDir = safePathSegment(ownerUserId);
   const date = new Date(originalCreatedAt);
   const yyyy = String(date.getUTCFullYear());
   const mm = String(date.getUTCMonth() + 1).padStart(2, '0');
   const dd = String(date.getUTCDate()).padStart(2, '0');
   const ext = extname(file.originalname).toLowerCase();
   const storedName = `${randomUUID()}${ext}`;
-  const relativeDir = join(yyyy, mm, dd);
-  const absoluteDir = join(process.cwd(), root, relativeDir);
+  const relativeDir = join(ownerDir, yyyy, mm, dd);
+  const absoluteDir = join(root, relativeDir);
   await mkdir(absoluteDir, { recursive: true });
   const absolutePath = join(absoluteDir, storedName);
   await writeFile(absolutePath, file.buffer);
-  const publicPath = `/storage/${yyyy}/${mm}/${dd}/${storedName}`;
+  const publicPath = `/storage/${ownerDir}/${yyyy}/${mm}/${dd}/${storedName}`;
   return {
     storagePath: absolutePath,
     publicPath,
