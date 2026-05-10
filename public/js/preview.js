@@ -1,79 +1,106 @@
 (function () {
   "use strict";
 
-  Webhard.bindTokenBox();
-
-  var periodType = document.getElementById("periodType");
-  var baseDate = document.getElementById("baseDate");
   var contentKind = document.getElementById("contentKind");
-  var search = document.getElementById("search");
+  var sortBasis = document.getElementById("sortBasis");
   var summary = document.getElementById("summary");
-  var grid = document.getElementById("previewGrid");
+  var feed = document.getElementById("previewFeed");
+  var sentinel = document.getElementById("feedSentinel");
+  var cursorDate = null;
+  var loading = false;
+  var hasMoreFeed = true;
+  var loadedWeeks = 0;
 
-  baseDate.value = new Date().toISOString().slice(0, 10);
-  search.addEventListener("click", load);
-  load();
+  contentKind.addEventListener("change", resetAndLoad);
+  sortBasis.addEventListener("change", resetAndLoad);
 
-  async function load() {
-    summary.textContent = "조회 중입니다.";
-    grid.innerHTML = "";
+  window.addEventListener("scroll", function () {
+    if (isPageBottom()) {
+      loadMoreFeed();
+    }
+  }, { passive: true });
+
+  resetAndLoad();
+
+  function resetAndLoad() {
+    cursorDate = null;
+    loading = false;
+    hasMoreFeed = true;
+    loadedWeeks = 0;
+    feed.innerHTML = "";
+    summary.textContent = "";
+    sentinel.textContent = "불러오는 중입니다.";
+    loadMoreFeed();
+  }
+
+  async function loadMoreFeed() {
+    if (loading || !hasMoreFeed) {
+      return;
+    }
+    loading = true;
+    sentinel.textContent = "불러오는 중입니다.";
     try {
-      var response = await fetch("/preview/list.json", {
+      var response = await fetch("/preview/feed.json", {
         method: "POST",
         headers: Object.assign({ "Content-Type": "application/json" }, Webhard.authHeaders()),
         body: JSON.stringify({
-          period_type: periodType.value,
-          base_date: baseDate.value,
-          content_kind: contentKind.value
+          cursor_date: cursorDate,
+          weeks: 5,
+          content_kind: contentKind.value,
+          sort_basis: sortBasis.value
         })
       });
       var body = await response.json();
       if (!response.ok || body.ok !== true) {
-        summary.textContent = body.message || "조회에 실패했습니다.";
+        sentinel.textContent = body.message || "파일을 불러오지 못했습니다.";
         return;
       }
-      render(body.data);
+      renderWeeks(body.data);
+      cursorDate = body.data.next_cursor_date;
+      hasMoreFeed = body.data.has_more === true && !!cursorDate;
+      sentinel.textContent = hasMoreFeed ? "아래로 스크롤하면 이전 5개 주차를 더 불러옵니다." : "더 표시할 파일이 없습니다.";
     } catch (error) {
-      summary.textContent = "조회 요청에 실패했습니다.";
+      sentinel.textContent = "파일을 불러오지 못했습니다.";
+    } finally {
+      loading = false;
     }
   }
 
-  function render(data) {
-    var items = data.items || [];
-    summary.textContent = data.start_date.slice(0, 10) + " ~ " + data.end_date.slice(0, 10)
-      + " / " + items.length + "개";
-    if (items.length === 0) {
-      grid.innerHTML = "<div class=\"empty\">원본 생성일 기준으로 표시할 파일이 없습니다.</div>";
-      return;
-    }
-    grid.innerHTML = items.map(card).join("");
+  function renderWeeks(data) {
+    var weeks = data.weeks || [];
+    weeks.forEach(function (week) {
+      feed.insertAdjacentHTML("beforeend", weekSection(week));
+    });
+    loadedWeeks += weeks.length;
+    var cardCount = feed.querySelectorAll(".preview-card").length;
+    summary.textContent = loadedWeeks > 0
+      ? "파일이 있는 " + loadedWeeks + "개 주차 / 미리보기 " + cardCount + "개"
+      : "표시할 파일이 없습니다.";
   }
 
-  function card(item) {
-    var media = item.content_kind === "VIDEO"
-      ? "<video class=\"preview-media\" src=\"" + escapeAttr(item.public_path) + "\" controls preload=\"metadata\"></video>"
-      : "<img class=\"preview-media\" src=\"" + escapeAttr(item.public_path) + "\" alt=\"\">";
-    return "<article class=\"preview-card\">"
-      + media
-      + "<div class=\"preview-meta\">"
-      + "<div class=\"preview-name\">" + escapeHtml(item.file_name) + "</div>"
-      + "<div>" + item.content_kind + " / " + formatSize(Number(item.file_size || 0)) + "</div>"
-      + "<div>원본 생성일: " + Webhard.formatDateTime(item.original_created_at) + "</div>"
+  function weekSection(week) {
+    var items = week.items || [];
+    var weekStart = String(week.week_start || "").slice(0, 10);
+    var detailUrl = "/preview-detail.html?week_start=" + encodeURIComponent(weekStart)
+      + "&content_kind=" + encodeURIComponent(contentKind.value)
+      + "&sort_basis=" + encodeURIComponent(sortBasis.value)
+      + "&label=" + encodeURIComponent(week.label || "");
+    var zipUrl = "/file/week-download?week_start=" + encodeURIComponent(weekStart)
+      + "&content_kind=" + encodeURIComponent(contentKind.value)
+      + "&sort_basis=" + encodeURIComponent(sortBasis.value);
+    return "<section class=\"week-section\">"
+      + "<div class=\"week-title\">"
+      + "<div>"
+      + "<h2>" + escapeHtml(week.label) + "</h2>"
+      + "<span>" + Number(week.item_count || items.length) + "개</span>"
       + "</div>"
-      + "</article>";
-  }
-
-  function formatSize(size) {
-    if (size >= 1024 * 1024 * 1024) {
-      return (size / 1024 / 1024 / 1024).toFixed(1) + " GB";
-    }
-    if (size >= 1024 * 1024) {
-      return (size / 1024 / 1024).toFixed(1) + " MB";
-    }
-    if (size >= 1024) {
-      return (size / 1024).toFixed(1) + " KB";
-    }
-    return size + " B";
+      + "<div class=\"week-actions\">"
+      + "<a class=\"btn\" href=\"" + escapeAttr(zipUrl) + "\">일괄 다운로드</a>"
+      + "<a class=\"btn\" href=\"" + escapeAttr(detailUrl) + "\">더보기</a>"
+      + "</div>"
+      + "</div>"
+      + "<div class=\"preview-slider\">" + items.map(Webhard.mediaCard).join("") + "</div>"
+      + "</section>";
   }
 
   function escapeHtml(value) {
@@ -85,5 +112,10 @@
 
   function escapeAttr(value) {
     return escapeHtml(value).replace(/"/g, "&quot;");
+  }
+
+  function isPageBottom() {
+    var doc = document.documentElement;
+    return window.innerHeight + window.scrollY >= doc.scrollHeight - 12;
   }
 })();

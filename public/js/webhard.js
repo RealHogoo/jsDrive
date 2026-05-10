@@ -49,10 +49,84 @@
       + "T" + pad(date.getHours()) + ":" + pad(date.getMinutes());
   }
 
+  function mediaCard(item) {
+    var mediaPath = item.file_id ? "/file/content/" + encodeURIComponent(item.file_id) : (item.public_path || "");
+    var media = mediaPath
+      ? mediaElement(item, mediaPath)
+      : "<div class=\"preview-media missing-media\">미리보기 없음</div>";
+    return "<article class=\"preview-card\">"
+      + "<a class=\"media-link\" href=\"/file-detail.html?file_id=" + encodeURIComponent(item.file_id || "") + "\">" + media + "</a>"
+      + "<div class=\"preview-meta\">"
+      + "<div class=\"preview-name\">" + escapeHtml(item.file_name) + "</div>"
+      + "<div>" + kindLabel(item.content_kind) + " / " + formatSize(Number(item.file_size || 0)) + "</div>"
+      + "<div>원본 생성일 " + formatDateTime(item.original_created_at) + "</div>"
+      + "</div>"
+      + "</article>";
+  }
+
+  function mediaElement(item, publicPath) {
+    if (item.content_kind === "VIDEO") {
+      return "<video class=\"preview-media\" src=\"" + escapeAttr(publicPath) + "\" controls preload=\"metadata\"></video>";
+    }
+    if (item.content_kind === "IMAGE") {
+      return "<img class=\"preview-media\" src=\"" + escapeAttr(publicPath) + "\" alt=\"\" loading=\"lazy\">";
+    }
+    return "<div class=\"preview-media document-preview\">"
+      + "<span class=\"document-badge\">" + escapeHtml(fileExtension(item.file_name)) + "</span>"
+      + "<strong>문서 파일</strong>"
+      + "<small>상세 화면에서 다운로드</small>"
+      + "</div>";
+  }
+
+  function kindLabel(kind) {
+    if (kind === "IMAGE") {
+      return "사진";
+    }
+    if (kind === "VIDEO") {
+      return "동영상";
+    }
+    if (kind === "DOCUMENT") {
+      return "문서";
+    }
+    return String(kind || "-");
+  }
+
+  function fileExtension(fileName) {
+    var match = String(fileName || "").match(/\.([^.]+)$/);
+    return match ? match[1].toUpperCase().slice(0, 8) : "DOC";
+  }
+
+  function formatSize(size) {
+    if (size >= 1024 * 1024 * 1024) {
+      return (size / 1024 / 1024 / 1024).toFixed(1) + " GB";
+    }
+    if (size >= 1024 * 1024) {
+      return (size / 1024 / 1024).toFixed(1) + " MB";
+    }
+    if (size >= 1024) {
+      return (size / 1024).toFixed(1) + " KB";
+    }
+    return size + " B";
+  }
+
+  function escapeHtml(value) {
+    return String(value || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
+  function escapeAttr(value) {
+    return escapeHtml(value).replace(/"/g, "&quot;");
+  }
+
   global.Webhard = {
     bindTokenBox: bindTokenBox,
     authHeaders: authHeaders,
     formatDateTime: formatDateTime,
-    localDateTimeValue: localDateTimeValue
+    localDateTimeValue: localDateTimeValue,
+    mediaCard: mediaCard,
+    kindLabel: kindLabel,
+    formatSize: formatSize
   };
 })(window);

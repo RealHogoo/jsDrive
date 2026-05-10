@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS wh_file (
     updated_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_by    VARCHAR(100) NOT NULL,
     CONSTRAINT fk_wh_file_folder FOREIGN KEY (folder_id) REFERENCES wh_folder (folder_id),
-    CONSTRAINT ck_wh_file_kind CHECK (content_kind IN ('IMAGE', 'VIDEO', 'OTHER')),
+    CONSTRAINT ck_wh_file_kind CHECK (content_kind IN ('IMAGE', 'VIDEO', 'DOCUMENT', 'OTHER')),
     CONSTRAINT ck_wh_file_deleted CHECK (deleted_yn IN ('Y', 'N'))
 );
 

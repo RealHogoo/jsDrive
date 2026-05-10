@@ -208,7 +208,7 @@ async function* walk(rootPath: string): AsyncGenerator<string> {
   }
 }
 
-function contentKindFor(fileName: string): 'IMAGE' | 'VIDEO' | 'OTHER' {
+function contentKindFor(fileName: string): 'IMAGE' | 'VIDEO' | 'DOCUMENT' | 'OTHER' {
   const lowerName = fileName.toLowerCase();
   if (/\.(jpg|jpeg|png|gif|webp|bmp|heic)$/.test(lowerName)) {
     return 'IMAGE';
@@ -216,10 +216,13 @@ function contentKindFor(fileName: string): 'IMAGE' | 'VIDEO' | 'OTHER' {
   if (/\.(mp4|mov|m4v|avi|mkv|webm)$/.test(lowerName)) {
     return 'VIDEO';
   }
+  if (/\.(pdf|xls|xlsx|csv|ods|doc|docx|ppt|pptx|txt|md|rtf|hwp|hwpx)$/.test(lowerName)) {
+    return 'DOCUMENT';
+  }
   return 'OTHER';
 }
 
-function contentTypeFor(fileName: string, contentKind: 'IMAGE' | 'VIDEO'): string {
+function contentTypeFor(fileName: string, contentKind: 'IMAGE' | 'VIDEO' | 'DOCUMENT'): string {
   const ext = extname(fileName).toLowerCase();
   const map: Record<string, string> = {
     '.jpg': 'image/jpeg',
@@ -235,8 +238,31 @@ function contentTypeFor(fileName: string, contentKind: 'IMAGE' | 'VIDEO'): strin
     '.avi': 'video/x-msvideo',
     '.mkv': 'video/x-matroska',
     '.webm': 'video/webm',
+    '.pdf': 'application/pdf',
+    '.xls': 'application/vnd.ms-excel',
+    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    '.csv': 'text/csv',
+    '.ods': 'application/vnd.oasis.opendocument.spreadsheet',
+    '.doc': 'application/msword',
+    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.ppt': 'application/vnd.ms-powerpoint',
+    '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    '.txt': 'text/plain',
+    '.md': 'text/markdown',
+    '.rtf': 'application/rtf',
+    '.hwp': 'application/x-hwp',
+    '.hwpx': 'application/x-hwpx',
   };
-  return map[ext] || (contentKind === 'IMAGE' ? 'image/*' : 'video/*');
+  if (map[ext]) {
+    return map[ext];
+  }
+  if (contentKind === 'IMAGE') {
+    return 'image/*';
+  }
+  if (contentKind === 'VIDEO') {
+    return 'video/*';
+  }
+  return 'application/octet-stream';
 }
 
 function publicPathFor(rootPath: string, ownerUserId: string, filePath: string): string {

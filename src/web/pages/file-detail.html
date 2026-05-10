@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>웹하드 파일 상세</title>
+  <link rel="stylesheet" href="/assets/css/webhard.css">
+</head>
+<body>
+  <header class="topbar">
+    <strong>웹하드</strong>
+    <nav>
+      <a href="/upload.html">업로드</a>
+      <a class="active" href="/preview.html">미리보기</a>
+      <a href="/indexing.html">인덱싱</a>
+    </nav>
+  </header>
+  <main class="shell">
+    <section class="panel toolbar">
+      <a class="btn" href="javascript:history.back()">뒤로</a>
+      <a id="downloadFile" class="btn primary" href="#">다운로드</a>
+    </section>
+    <section class="panel file-detail">
+      <h1 id="fileName">파일 상세</h1>
+      <div id="fileViewer" class="file-viewer"></div>
+      <dl class="status-list">
+        <div>
+          <dt>종류</dt>
+          <dd id="fileKind">-</dd>
+        </div>
+        <div>
+          <dt>크기</dt>
+          <dd id="fileSize">-</dd>
+        </div>
+        <div>
+          <dt>원본 생성일</dt>
+          <dd id="fileCreatedAt">-</dd>
+        </div>
+      </dl>
+      <div id="message" class="message"></div>
+    </section>
+  </main>
+  <script src="/assets/js/webhard.js"></script>
+  <script src="/assets/js/file-detail.js"></script>
+</body>
+</html>

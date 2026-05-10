@@ -16,31 +16,25 @@
     </nav>
   </header>
   <main class="shell">
-    <section class="panel toolbar">
-      <label>
-        토큰
-        <input id="token" class="input" type="password" placeholder="Bearer 토큰">
-      </label>
-      <button id="saveToken" class="btn" type="button">저장</button>
-    </section>
-
     <section class="panel">
       <h1>파일 업로드</h1>
       <form id="uploadForm" class="form-grid">
-        <label class="wide">
-          파일
-          <input id="file" class="input" type="file" accept="image/*,video/*" required>
-        </label>
         <label>
           폴더 ID
           <input id="folderId" class="input" type="number" min="1" placeholder="선택">
         </label>
-        <label>
-          원본 생성일
-          <input id="originalCreatedAt" class="input" type="datetime-local" required>
+        <div id="uploadLimitText" class="upload-limit-text">
+          단일 파일 100MB 이하, 전체 500MB 이하
+        </div>
+        <label id="dropZone" class="drop-zone wide">
+          <input id="file" type="file" accept="image/*,video/*,.pdf,.xls,.xlsx,.csv,.ods,.doc,.docx,.ppt,.pptx,.txt,.md,.rtf,.hwp,.hwpx" multiple>
+          <span class="drop-title">파일을 끌어오거나 클릭해서 선택</span>
+          <span class="drop-subtitle">사진, 동영상, PDF, Excel 등 문서 파일을 여러 개 업로드할 수 있습니다.</span>
         </label>
+        <div id="fileList" class="upload-list wide"></div>
         <div class="actions wide">
           <button class="btn primary" type="submit">업로드</button>
+          <button id="clearFiles" class="btn" type="button">비우기</button>
           <a class="btn" href="/preview.html">미리보기로 이동</a>
         </div>
       </form>
