@@ -126,10 +126,11 @@ export class WebController {
     const result = await this.databaseService.query<{
       file_id: number;
       file_name: string;
+      file_size: string;
       storage_path: string;
     }>(
       `
-      SELECT file_id, file_name, storage_path
+      SELECT file_id, file_name, file_size, storage_path
       FROM wh_file
       WHERE owner_user_id = $1
         AND deleted_yn = 'N'
@@ -143,6 +144,12 @@ export class WebController {
     const files = result.rows.filter((file) => file.storage_path && existsSync(file.storage_path));
     if (files.length === 0) {
       this.renderError(response, 404, '다운로드할 파일이 없습니다.');
+      return;
+    }
+    const zipLimits = weekDownloadLimits();
+    const totalBytes = files.reduce((sum, file) => sum + Number(file.file_size || 0), 0);
+    if (files.length > zipLimits.maxFiles || totalBytes > zipLimits.maxBytes) {
+      this.renderError(response, 400, '다운로드할 파일이 너무 많습니다. 필터를 줄여서 다시 시도하세요.');
       return;
     }
     const zipPath = await createZipFile(files, weekStart);
@@ -201,6 +208,10 @@ export class WebController {
   }
 
   private async findOwnedFile(fileId: string, ownerUserId: string) {
+    const parsedFileId = Number(fileId);
+    if (!Number.isSafeInteger(parsedFileId) || parsedFileId <= 0) {
+      return null;
+    }
     const result = await this.databaseService.query<{
       file_name: string;
       storage_path: string;
@@ -213,7 +224,7 @@ export class WebController {
         AND owner_user_id = $2
         AND deleted_yn = 'N'
       `,
-      [Number(fileId), ownerUserId],
+      [parsedFileId, ownerUserId],
     );
     return result.rows[0] || null;
   }
@@ -241,8 +252,13 @@ function publicBaseUrl(request: Request): string {
   if (configured) {
     return configured;
   }
-  const proto = firstHeaderValue(request.header('x-forwarded-proto')) || request.protocol || 'http';
-  const host = firstHeaderValue(request.header('x-forwarded-host')) || request.header('host') || 'localhost:8083';
+  const trustForwardedHeaders = String(process.env.TRUST_FORWARDED_HEADERS || '').toLowerCase() === 'true';
+  const proto = (trustForwardedHeaders ? firstHeaderValue(request.header('x-forwarded-proto')) : null)
+    || request.protocol
+    || 'http';
+  const host = (trustForwardedHeaders ? firstHeaderValue(request.header('x-forwarded-host')) : null)
+    || request.header('host')
+    || 'localhost:8083';
   return `${proto}://${host}`;
 }
 
@@ -301,4 +317,17 @@ async function createZipFile(
   await archive.finalize();
   await Promise.race([closed, failed]);
   return zipPath;
+}
+
+function weekDownloadLimits(): { maxFiles: number; maxBytes: number } {
+  return {
+    maxFiles: positiveNumberEnv('WEBHARD_WEEK_DOWNLOAD_MAX_FILES') || 500,
+    maxBytes: positiveNumberEnv('WEBHARD_WEEK_DOWNLOAD_MAX_BYTES')
+      || (positiveNumberEnv('WEBHARD_WEEK_DOWNLOAD_MAX_MB') || 2048) * 1024 * 1024,
+  };
+}
+
+function positiveNumberEnv(key: string): number | null {
+  const parsed = Number(process.env[key] || '');
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }

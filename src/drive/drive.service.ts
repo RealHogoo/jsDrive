@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { mkdir, writeFile } from 'fs/promises';
-import { extname, join } from 'path';
+import { extname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { ApiException } from '../common/api-exception';
 import { safePathSegment, storageRoot } from '../common/storage-path';
 import { uploadLimits } from '../common/upload-limit';
@@ -116,7 +116,7 @@ export class DriveService {
     await this.indexingService.ensureNotRunning(viewer);
     const folderId = optionalNumber(params.folder_id, 'folder_id');
     const fileName = requiredText(params.file_name, 'file_name is required');
-    const storagePath = requiredText(params.storage_path, 'storage_path is required');
+    const storagePath = validateOwnedStoragePath(requiredText(params.storage_path, 'storage_path is required'), viewer.userId);
     const fileSize = optionalNumber(params.file_size, 'file_size') || 0;
     const contentType = optionalText(params.content_type) || 'application/octet-stream';
     const contentKind = contentKindFor(contentType, fileName);
@@ -644,6 +644,16 @@ function previousDate(dateOnly: string): string {
   const date = dateOnlyToUtc(dateOnly);
   date.setUTCDate(date.getUTCDate() - 1);
   return toDateOnly(date);
+}
+
+function validateOwnedStoragePath(storagePath: string, ownerUserId: string): string {
+  const root = resolve(storageRoot(), safePathSegment(ownerUserId));
+  const target = resolve(storagePath);
+  const pathFromRoot = relative(root, target);
+  if (pathFromRoot === '' || pathFromRoot === '..' || pathFromRoot.startsWith(`..${sep}`) || isAbsolute(pathFromRoot)) {
+    throw ApiException.badRequest('storage_path must be under the owner storage root');
+  }
+  return target;
 }
 
 async function saveUploadedFile(

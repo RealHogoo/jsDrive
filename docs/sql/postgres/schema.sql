@@ -81,6 +81,9 @@ CREATE INDEX IF NOT EXISTS idx_wh_file_01
 CREATE INDEX IF NOT EXISTS idx_wh_file_02
     ON wh_file (owner_user_id, original_created_at, content_kind, deleted_yn);
 
+CREATE INDEX IF NOT EXISTS idx_wh_file_03
+    ON wh_file (owner_user_id, created_at, content_kind, deleted_yn);
+
 CREATE INDEX IF NOT EXISTS idx_wh_share_01
     ON wh_share (share_token, revoked_yn, expires_at);
 
