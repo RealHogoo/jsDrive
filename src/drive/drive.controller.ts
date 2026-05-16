@@ -33,9 +33,43 @@ export class DriveController {
     return ok(await this.driveService.fileList(body, viewer(request)), traceId(request));
   }
 
+  @Post('file/search.json')
+  async searchFiles(@Body() body: Record<string, unknown> = {}, @Req() request: Request) {
+    return ok(await this.driveService.searchFiles(body, viewer(request)), traceId(request));
+  }
+
   @Post('file/detail.json')
   async fileDetail(@Body() body: Record<string, unknown> = {}, @Req() request: Request) {
     return ok(await this.driveService.fileDetail(body, viewer(request)), traceId(request));
+  }
+
+  @RequirePermission('DELETE')
+  @Post('file/delete.json')
+  async deleteFile(@Body() body: Record<string, unknown> = {}, @Req() request: Request) {
+    return ok(await this.driveService.deleteFile(body, viewer(request)), traceId(request));
+  }
+
+  @Post('trash/list.json')
+  async trashList(@Body() body: Record<string, unknown> = {}, @Req() request: Request) {
+    return ok(await this.driveService.trashList(body, viewer(request)), traceId(request));
+  }
+
+  @RequirePermission('DELETE')
+  @Post('trash/restore.json')
+  async trashRestore(@Body() body: Record<string, unknown> = {}, @Req() request: Request) {
+    return ok(await this.driveService.restoreFile(body, viewer(request)), traceId(request));
+  }
+
+  @RequirePermission('DELETE')
+  @Post('trash/purge.json')
+  async trashPurge(@Body() body: Record<string, unknown> = {}, @Req() request: Request) {
+    return ok(await this.driveService.purgeFile(body, viewer(request)), traceId(request));
+  }
+
+  @RequirePermission('DELETE')
+  @Post('trash/purge-old.json')
+  async trashPurgeOld(@Body() body: Record<string, unknown> = {}, @Req() request: Request) {
+    return ok(await this.driveService.purgeOldTrash(body, viewer(request)), traceId(request));
   }
 
   @RequirePermission('WRITE')
@@ -101,6 +135,12 @@ export class DriveController {
   @Post('index/status.json')
   async indexStatus(@Req() request: Request) {
     return ok(await this.indexingService.status(viewer(request)), traceId(request));
+  }
+
+  @RequirePermission('WRITE')
+  @Post('thumbnail/rebuild.json')
+  async thumbnailRebuild(@Body() body: Record<string, unknown> = {}, @Req() request: Request) {
+    return ok(await this.driveService.rebuildThumbnails(body, viewer(request)), traceId(request));
   }
 }
 

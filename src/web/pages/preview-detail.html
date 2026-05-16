@@ -12,6 +12,9 @@
     <nav>
       <a href="/upload.html">업로드</a>
       <a class="active" href="/preview.html">미리보기</a>
+      <a href="/search.html">검색</a>
+      <a href="/download-jobs.html">다운로드</a>
+      <a href="/trash.html">휴지통</a>
       <a href="/indexing.html">인덱싱</a>
     </nav>
   </header>
@@ -19,6 +22,7 @@
     <section class="panel toolbar">
       <a class="btn" href="/preview.html">목록으로</a>
       <a id="downloadWeek" class="btn" href="#">일괄 다운로드</a>
+      <span id="downloadStatus" class="summary"></span>
     </section>
 
     <section class="panel feed-head">
@@ -27,7 +31,7 @@
         정렬 기준
         <select id="sortBasis" class="input">
           <option value="UPLOADED">업로드일시 기준</option>
-          <option value="ORIGINAL_CREATED">원본 파일 생성 기준</option>
+          <option value="ORIGINAL_CREATED">원본 생성일 기준</option>
         </select>
       </label>
       <label>

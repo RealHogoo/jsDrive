@@ -1,26 +1,20 @@
-import { All, Controller, Get, Param, Req, Res } from '@nestjs/common';
-import { randomUUID } from 'crypto';
-import { once } from 'events';
+import { Controller, Get, Param, Req, Res } from '@nestjs/common';
 import { Request, Response } from 'express';
-import { createWriteStream, existsSync, readFileSync } from 'fs';
-import { unlink } from 'fs/promises';
-import { tmpdir } from 'os';
+import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { hasAnyWebhardPermission, isAdmin } from '../auth/permission.util';
 import { Public } from '../auth/public.decorator';
 import { authToken } from '../common/request-util';
 import { DatabaseService } from '../database/database.service';
 import { AdminServiceClient } from '../integration/admin/admin-service.client';
-
-const { ZipArchive } = require('archiver') as {
-  ZipArchive: new (options: { zlib: { level: number } }) => any;
-};
+import { DownloadJobService } from './download-job.service';
 
 @Controller()
 export class WebController {
   constructor(
     private readonly adminServiceClient: AdminServiceClient,
     private readonly databaseService: DatabaseService,
+    private readonly downloadJobService: DownloadJobService,
   ) {}
 
   @Public()
@@ -60,6 +54,24 @@ export class WebController {
   }
 
   @Public()
+  @Get('trash.html')
+  async trash(@Req() request: Request, @Res() response: Response): Promise<void> {
+    await this.renderProtectedPage(request, response, 'trash.html');
+  }
+
+  @Public()
+  @Get('search.html')
+  async search(@Req() request: Request, @Res() response: Response): Promise<void> {
+    await this.renderProtectedPage(request, response, 'search.html');
+  }
+
+  @Public()
+  @Get('download-jobs.html')
+  async downloadJobs(@Req() request: Request, @Res() response: Response): Promise<void> {
+    await this.renderProtectedPage(request, response, 'download-jobs.html');
+  }
+
+  @Public()
   @Get('indexing.html')
   async indexing(@Req() request: Request, @Res() response: Response): Promise<void> {
     await this.renderProtectedPage(request, response, 'indexing.html');
@@ -86,6 +98,23 @@ export class WebController {
     }
     response.type(file.content_type || 'application/octet-stream');
     response.sendFile(file.storage_path);
+  }
+
+  @Public()
+  @Get('file/thumbnail/:fileId')
+  async fileThumbnail(@Param('fileId') fileId: string, @Req() request: Request, @Res() response: Response): Promise<void> {
+    const currentUser = await this.currentUser(request);
+    if (!currentUser) {
+      this.renderError(response, 401);
+      return;
+    }
+    const file = await this.findOwnedFile(fileId, currentUser.user_id);
+    if (!file || !file.thumbnail_path || !existsSync(file.thumbnail_path)) {
+      this.renderError(response, 404, '썸네일을 찾을 수 없습니다.');
+      return;
+    }
+    response.type('image/webp');
+    response.sendFile(file.thumbnail_path);
   }
 
   @Public()
@@ -117,67 +146,40 @@ export class WebController {
       this.renderError(response, 400, '다운로드 기준 주차가 올바르지 않습니다.');
       return;
     }
-    const contentKind = normalizeContentKind(request.query.content_kind);
-    const sortBasis = normalizeSortBasis(request.query.sort_basis);
-    const dateColumn = sortBasis === 'UPLOADED' ? 'created_at' : 'original_created_at';
-    const start = new Date(`${weekStart}T00:00:00.000Z`);
-    const end = new Date(start);
-    end.setUTCDate(end.getUTCDate() + 7);
-    const result = await this.databaseService.query<{
-      file_id: number;
-      file_name: string;
-      file_size: string;
-      storage_path: string;
-    }>(
-      `
-      SELECT file_id, file_name, file_size, storage_path
-      FROM wh_file
-      WHERE owner_user_id = $1
-        AND deleted_yn = 'N'
-        AND ${dateColumn} >= CAST($2 AS timestamp)
-        AND ${dateColumn} < CAST($3 AS timestamp)
-        AND ($4::varchar IS NULL OR content_kind = $4)
-      ORDER BY ${dateColumn} DESC, file_id DESC
-      `,
-      [currentUser.user_id, start.toISOString(), end.toISOString(), contentKind],
-    );
-    const files = result.rows.filter((file) => file.storage_path && existsSync(file.storage_path));
-    if (files.length === 0) {
-      this.renderError(response, 404, '다운로드할 파일이 없습니다.');
-      return;
-    }
-    const zipLimits = weekDownloadLimits();
-    const totalBytes = files.reduce((sum, file) => sum + Number(file.file_size || 0), 0);
-    if (files.length > zipLimits.maxFiles || totalBytes > zipLimits.maxBytes) {
-      this.renderError(response, 400, '다운로드할 파일이 너무 많습니다. 필터를 줄여서 다시 시도하세요.');
-      return;
-    }
-    const zipPath = await createZipFile(files, weekStart);
-    response.download(zipPath, `webhard-${weekStart}.zip`, async () => {
-      await unlink(zipPath).catch(() => undefined);
-    });
+    const job = await this.downloadJobService.startWeekDownload({
+      week_start: weekStart,
+      content_kind: request.query.content_kind,
+      sort_basis: request.query.sort_basis,
+    }, { userId: currentUser.user_id });
+    response.redirect(`/preview-detail.html?week_start=${encodeURIComponent(weekStart)}&download_job_id=${encodeURIComponent(String(job.job_id || ''))}`);
   }
 
   @Public()
-  @All('*')
-  async notFound(@Req() request: Request, @Res() response: Response): Promise<void> {
-    if (request.method.toUpperCase() === 'GET') {
-      this.renderError(response, 404, '요청한 화면을 찾을 수 없습니다.');
+  @Get('download/file/:jobId')
+  async downloadFile(@Param('jobId') jobId: string, @Req() request: Request, @Res() response: Response): Promise<void> {
+    const currentUser = await this.currentUser(request);
+    if (!currentUser) {
+      this.renderError(response, 401);
       return;
     }
-    response.status(404).json({
-      ok: false,
-      code: 'NOT_FOUND',
-      message: 'not found',
-      data: null,
-      trace_id: null,
-    });
+    const job = await this.downloadJobService.completedJob(jobId, currentUser.user_id);
+    if (!job) {
+      this.renderError(response, 404, '다운로드 파일을 찾을 수 없습니다.');
+      return;
+    }
+    response.download(job.zip_path, job.download_name || 'webhard.zip');
+  }
+
+  @Public()
+  @Get('*')
+  async notFound(@Req() request: Request, @Res() response: Response): Promise<void> {
+    this.renderError(response, 404, '요청한 화면을 찾을 수 없습니다.');
   }
 
   private async renderProtectedPage(
     request: Request,
     response: Response,
-    pageName: 'index.html' | 'upload.html' | 'preview.html' | 'preview-detail.html' | 'file-detail.html' | 'indexing.html',
+    pageName: 'index.html' | 'upload.html' | 'preview.html' | 'preview-detail.html' | 'file-detail.html' | 'trash.html' | 'search.html' | 'download-jobs.html' | 'indexing.html',
   ): Promise<void> {
     const currentUser = await this.currentUser(request);
     if (!currentUser) {
@@ -215,10 +217,11 @@ export class WebController {
     const result = await this.databaseService.query<{
       file_name: string;
       storage_path: string;
+      thumbnail_path: string | null;
       content_type: string;
     }>(
       `
-      SELECT file_name, storage_path, content_type
+      SELECT file_name, storage_path, thumbnail_path, content_type
       FROM wh_file
       WHERE file_id = $1
         AND owner_user_id = $2
@@ -275,59 +278,4 @@ function trimTrailingSlash(value: string): string {
     normalized = normalized.slice(0, -1);
   }
   return normalized;
-}
-
-function normalizeContentKind(value: unknown): string | null {
-  const text = String(value || '').trim().toUpperCase();
-  if (!text || text === 'ALL') {
-    return null;
-  }
-  return text === 'IMAGE' || text === 'VIDEO' || text === 'DOCUMENT' ? text : null;
-}
-
-function normalizeSortBasis(value: unknown): 'ORIGINAL_CREATED' | 'UPLOADED' {
-  const text = String(value || '').trim().toUpperCase();
-  if (!text || text === 'ORIGINAL_CREATED') {
-    return 'ORIGINAL_CREATED';
-  }
-  return text === 'UPLOADED' || text === 'CREATED_AT' ? 'UPLOADED' : 'ORIGINAL_CREATED';
-}
-
-function zipEntryName(fileName: string, index: number): string {
-  const safe = fileName.replace(/[\\/:*?"<>|]/g, '_').trim() || `file-${index + 1}`;
-  return `${String(index + 1).padStart(3, '0')}-${safe}`;
-}
-
-async function createZipFile(
-  files: Array<{ file_id: number; file_name: string; storage_path: string }>,
-  weekStart: string,
-): Promise<string> {
-  const zipPath = join(tmpdir(), `webhard-${weekStart}-${randomUUID()}.zip`);
-  const output = createWriteStream(zipPath);
-  const archive = new ZipArchive({ zlib: { level: 6 } });
-  const closed = once(output, 'close');
-  const failed = Promise.race([
-    once(output, 'error').then(([error]) => Promise.reject(error)),
-    once(archive, 'error').then(([error]) => Promise.reject(error)),
-  ]);
-  archive.pipe(output);
-  files.forEach((file, index) => {
-    archive.file(file.storage_path, { name: zipEntryName(file.file_name || `file-${file.file_id}`, index) });
-  });
-  await archive.finalize();
-  await Promise.race([closed, failed]);
-  return zipPath;
-}
-
-function weekDownloadLimits(): { maxFiles: number; maxBytes: number } {
-  return {
-    maxFiles: positiveNumberEnv('WEBHARD_WEEK_DOWNLOAD_MAX_FILES') || 500,
-    maxBytes: positiveNumberEnv('WEBHARD_WEEK_DOWNLOAD_MAX_BYTES')
-      || (positiveNumberEnv('WEBHARD_WEEK_DOWNLOAD_MAX_MB') || 2048) * 1024 * 1024,
-  };
-}
-
-function positiveNumberEnv(key: string): number | null {
-  const parsed = Number(process.env[key] || '');
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }

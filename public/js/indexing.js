@@ -3,53 +3,66 @@
 
   var startButton = document.getElementById("startIndex");
   var refreshButton = document.getElementById("refreshStatus");
+  var rebuildButton = document.getElementById("rebuildThumbs");
   var message = document.getElementById("indexMessage");
+  var thumbnailMessage = document.getElementById("thumbnailMessage");
   var timer = null;
 
   startButton.addEventListener("click", startIndexing);
   refreshButton.addEventListener("click", loadStatus);
+  rebuildButton.addEventListener("click", rebuildThumbnails);
   loadStatus();
 
   async function startIndexing() {
     message.className = "message";
     message.textContent = "인덱싱 시작 요청 중입니다.";
     try {
-      var response = await fetch("/index/start.json", {
-        method: "POST",
-        headers: Object.assign({ "Content-Type": "application/json" }, Webhard.authHeaders()),
-        body: "{}"
-      });
-      var body = await response.json();
-      if (!response.ok || body.ok !== true) {
-        showError(body.message || "인덱싱 시작에 실패했습니다.");
-        return;
-      }
+      var data = await Webhard.postJson("/index/start.json", {});
       message.textContent = "인덱싱이 시작되었습니다. 진행 중에는 파일 등록이 차단됩니다.";
-      render(body.data);
+      render(data);
       schedule();
     } catch (error) {
-      showError("인덱싱 시작 요청에 실패했습니다.");
+      showError(message, error.message || "인덱싱 시작 요청에 실패했습니다.");
     }
   }
 
   async function loadStatus() {
     try {
-      var response = await fetch("/index/status.json", {
-        method: "POST",
-        headers: Object.assign({ "Content-Type": "application/json" }, Webhard.authHeaders()),
-        body: "{}"
-      });
-      var body = await response.json();
-      if (!response.ok || body.ok !== true) {
-        showError(body.message || "상태 조회에 실패했습니다.");
-        return;
-      }
-      render(body.data);
-      if (body.data.status_cd === "RUNNING") {
+      var data = await Webhard.postJson("/index/status.json", {});
+      render(data);
+      if (data.status_cd === "RUNNING") {
         schedule();
       }
     } catch (error) {
-      showError("상태 조회 요청에 실패했습니다.");
+      showError(message, error.message || "상태 조회 요청에 실패했습니다.");
+    }
+  }
+
+  async function rebuildThumbnails() {
+    rebuildButton.disabled = true;
+    thumbnailMessage.className = "message";
+    thumbnailMessage.textContent = "썸네일을 재생성하는 중입니다.";
+    try {
+      var totalUpdated = 0;
+      var round = 0;
+      var hasMore = true;
+      while (hasMore && round < 20) {
+        var data = await Webhard.postJson("/thumbnail/rebuild.json", { limit: 50 });
+        totalUpdated += Number(data.updated_count || 0);
+        hasMore = data.has_more === true;
+        round++;
+        thumbnailMessage.textContent = "재생성 " + totalUpdated + "개 완료";
+        if (Number(data.scanned_count || 0) === 0) {
+          hasMore = false;
+        }
+      }
+      thumbnailMessage.textContent = totalUpdated > 0
+        ? "썸네일 " + totalUpdated + "개를 재생성했습니다."
+        : "재생성할 썸네일이 없습니다.";
+    } catch (error) {
+      showError(thumbnailMessage, error.message || "썸네일 재생성에 실패했습니다.");
+    } finally {
+      rebuildButton.disabled = false;
     }
   }
 
@@ -76,8 +89,8 @@
     timer = setTimeout(loadStatus, 1500);
   }
 
-  function showError(text) {
-    message.className = "message error";
-    message.textContent = text;
+  function showError(target, text) {
+    target.className = "message error";
+    target.textContent = text;
   }
 })();

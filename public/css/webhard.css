@@ -123,6 +123,11 @@ label {
   color: #fff;
 }
 
+.btn.danger {
+  border-color: #dc2626;
+  color: #dc2626;
+}
+
 .message,
 .summary {
   margin-top: 14px;
@@ -414,6 +419,12 @@ label {
   overflow-wrap: anywhere;
 }
 
+.card-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .empty {
   padding: 30px;
   text-align: center;
@@ -521,6 +532,36 @@ label {
   overflow-wrap: anywhere;
 }
 
+.compact-grid {
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.small-input {
+  width: 96px;
+}
+
+.inline-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.job-list {
+  display: grid;
+  gap: 10px;
+}
+
+.job-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 1.5fr) 90px 100px minmax(160px, 1fr) 150px auto;
+  gap: 10px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid #dbe2ef;
+  border-radius: 8px;
+  background: #fff;
+}
+
 @media (max-width: 720px) {
   .shell {
     width: 100%;
@@ -559,6 +600,10 @@ label {
   .preview-slider {
     grid-auto-columns: minmax(210px, 82vw);
     gap: 12px;
+  }
+
+  .job-row {
+    grid-template-columns: 1fr;
   }
 }
 

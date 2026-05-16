@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>웹하드</title>
+  <title>웹하드 다운로드 작업</title>
   <link rel="stylesheet" href="/assets/css/webhard.css">
 </head>
 <body>
@@ -13,22 +13,22 @@
       <a href="/upload.html">업로드</a>
       <a href="/preview.html">미리보기</a>
       <a href="/search.html">검색</a>
-      <a href="/download-jobs.html">다운로드</a>
+      <a class="active" href="/download-jobs.html">다운로드</a>
       <a href="/trash.html">휴지통</a>
       <a href="/indexing.html">인덱싱</a>
     </nav>
   </header>
   <main class="shell">
+    <section class="panel feed-head">
+      <h1>다운로드 작업</h1>
+      <div id="downloadSummary" class="summary"></div>
+    </section>
     <section class="panel">
-      <h1>웹하드</h1>
-      <p>사진, 동영상, 문서를 업로드하고 원본 생성일 또는 업로드일시 기준으로 확인합니다.</p>
-      <div class="actions">
-        <a class="btn primary" href="/upload.html">파일 업로드</a>
-        <a class="btn" href="/preview.html">미리보기</a>
-        <a class="btn" href="/search.html">파일 검색</a>
-        <a class="btn" href="/indexing.html">NAS 인덱싱</a>
-      </div>
+      <div id="downloadList" class="job-list"></div>
+      <div id="downloadSentinel" class="feed-sentinel"></div>
     </section>
   </main>
+  <script src="/assets/js/webhard.js"></script>
+  <script src="/assets/js/download-jobs.js"></script>
 </body>
 </html>

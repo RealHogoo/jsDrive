@@ -13,6 +13,7 @@
 
   contentKind.addEventListener("change", resetAndLoad);
   sortBasis.addEventListener("change", resetAndLoad);
+  feed.addEventListener("click", handleFeedClick);
 
   window.addEventListener("scroll", function () {
     if (isPageBottom()) {
@@ -40,27 +41,18 @@
     loading = true;
     sentinel.textContent = "불러오는 중입니다.";
     try {
-      var response = await fetch("/preview/feed.json", {
-        method: "POST",
-        headers: Object.assign({ "Content-Type": "application/json" }, Webhard.authHeaders()),
-        body: JSON.stringify({
-          cursor_date: cursorDate,
-          weeks: 5,
-          content_kind: contentKind.value,
-          sort_basis: sortBasis.value
-        })
+      var data = await Webhard.postJson("/preview/feed.json", {
+        cursor_date: cursorDate,
+        weeks: 5,
+        content_kind: contentKind.value,
+        sort_basis: sortBasis.value
       });
-      var body = await response.json();
-      if (!response.ok || body.ok !== true) {
-        sentinel.textContent = body.message || "파일을 불러오지 못했습니다.";
-        return;
-      }
-      renderWeeks(body.data);
-      cursorDate = body.data.next_cursor_date;
-      hasMoreFeed = body.data.has_more === true && !!cursorDate;
+      renderWeeks(data);
+      cursorDate = data.next_cursor_date;
+      hasMoreFeed = data.has_more === true && !!cursorDate;
       sentinel.textContent = hasMoreFeed ? "아래로 스크롤하면 이전 5개 주차를 더 불러옵니다." : "더 표시할 파일이 없습니다.";
     } catch (error) {
-      sentinel.textContent = "파일을 불러오지 못했습니다.";
+      sentinel.textContent = error.message || "파일을 불러오지 못했습니다.";
     } finally {
       loading = false;
     }
@@ -101,6 +93,27 @@
       + "</div>"
       + "<div class=\"preview-slider\">" + items.map(Webhard.mediaCard).join("") + "</div>"
       + "</section>";
+  }
+
+  async function handleFeedClick(event) {
+    var button = event.target.closest("[data-action=\"delete-file\"]");
+    if (!button) {
+      return;
+    }
+    event.preventDefault();
+    if (!window.confirm("파일을 휴지통으로 이동할까요?")) {
+      return;
+    }
+    try {
+      await Webhard.postJson("/file/delete.json", { file_id: button.getAttribute("data-file-id") });
+      var card = button.closest(".preview-card");
+      if (card) {
+        card.remove();
+      }
+      summary.textContent = "파일을 휴지통으로 이동했습니다.";
+    } catch (error) {
+      summary.textContent = error.message;
+    }
   }
 
   function escapeHtml(value) {

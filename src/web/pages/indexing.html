@@ -12,18 +12,30 @@
     <nav>
       <a href="/upload.html">업로드</a>
       <a href="/preview.html">미리보기</a>
+      <a href="/search.html">검색</a>
+      <a href="/download-jobs.html">다운로드</a>
+      <a href="/trash.html">휴지통</a>
       <a class="active" href="/indexing.html">인덱싱</a>
     </nav>
   </header>
   <main class="shell">
     <section class="panel">
       <h1>NAS 파일 인덱싱</h1>
-      <p>계정별 저장 루트에 이미 있는 사진과 동영상을 찾아 미리보기 목록에 등록합니다.</p>
+      <p>계정별 루트 디렉터리에 있는 사진, 동영상, 문서 파일을 찾아 미리보기 목록에 등록합니다.</p>
       <div class="actions">
         <button id="startIndex" class="btn primary" type="button">인덱싱 시작</button>
         <button id="refreshStatus" class="btn" type="button">상태 새로고침</button>
       </div>
       <div id="indexMessage" class="message"></div>
+    </section>
+
+    <section class="panel">
+      <h2>썸네일 재생성</h2>
+      <p>기존 이미지와 동영상 중 썸네일이 없는 파일을 50개씩 처리합니다.</p>
+      <div class="actions">
+        <button id="rebuildThumbs" class="btn" type="button">썸네일 재생성</button>
+      </div>
+      <div id="thumbnailMessage" class="message"></div>
     </section>
 
     <section class="panel">

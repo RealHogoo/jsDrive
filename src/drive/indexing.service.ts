@@ -4,6 +4,7 @@ import { basename, extname, join } from 'path';
 import { ApiCode } from '../common/api-code';
 import { ApiException } from '../common/api-exception';
 import { safePathSegment, storageRoot } from '../common/storage-path';
+import { createImageThumbnail, createVideoThumbnail } from '../common/thumbnail';
 import { DatabaseService } from '../database/database.service';
 import type { Viewer } from './drive.service';
 
@@ -94,9 +95,9 @@ export class IndexingService {
         try {
           const info = await stat(filePath);
           const publicPath = publicPathFor(rootPath, ownerUserId, filePath);
-          const exists = await this.databaseService.query(
+          const exists = await this.databaseService.query<{ file_id: number; thumbnail_path: string | null }>(
             `
-            SELECT 1
+            SELECT file_id, thumbnail_path
             FROM wh_file
             WHERE owner_user_id = $1
               AND storage_path = $2
@@ -106,15 +107,38 @@ export class IndexingService {
             [ownerUserId, filePath],
           );
           if ((exists.rowCount || 0) > 0) {
+            const existing = exists.rows[0];
+            if ((contentKind === 'IMAGE' || contentKind === 'VIDEO') && !existing.thumbnail_path) {
+              const originalCreatedAt = info.birthtime && !Number.isNaN(info.birthtime.getTime())
+                ? info.birthtime.toISOString()
+                : info.mtime.toISOString();
+              const thumbnailPath = await createThumbnail(contentKind, filePath, ownerUserId, originalCreatedAt, fileName);
+              if (thumbnailPath) {
+                await this.databaseService.query(
+                  `
+                  UPDATE wh_file
+                  SET thumbnail_path = $2,
+                      updated_at = CURRENT_TIMESTAMP,
+                      updated_by = $3
+                  WHERE file_id = $1
+                  `,
+                  [existing.file_id, thumbnailPath, ownerUserId],
+                );
+              }
+            }
             skippedCount++;
           } else {
+            const originalCreatedAt = info.birthtime && !Number.isNaN(info.birthtime.getTime())
+              ? info.birthtime.toISOString()
+              : info.mtime.toISOString();
+            const thumbnailPath = await createThumbnail(contentKind, filePath, ownerUserId, originalCreatedAt, fileName);
             await this.databaseService.query(
               `
               INSERT INTO wh_file (
                 owner_user_id, folder_id, file_name, file_size, content_type, content_kind,
-                storage_path, public_path, original_created_at, created_by, updated_by
+                storage_path, public_path, thumbnail_path, original_created_at, created_by, updated_by
               ) VALUES (
-                $1, NULL, $2, $3, $4, $5, $6, $7, CAST($8 AS timestamp), $1, $1
+                $1, NULL, $2, $3, $4, $5, $6, $7, $8, CAST($9 AS timestamp), $1, $1
               )
               `,
               [
@@ -125,7 +149,8 @@ export class IndexingService {
                 contentKind,
                 filePath,
                 publicPath,
-                info.birthtime && !Number.isNaN(info.birthtime.getTime()) ? info.birthtime.toISOString() : info.mtime.toISOString(),
+                thumbnailPath,
+                originalCreatedAt,
               ],
             );
             indexedCount++;
@@ -263,6 +288,22 @@ function contentTypeFor(fileName: string, contentKind: 'IMAGE' | 'VIDEO' | 'DOCU
     return 'video/*';
   }
   return 'application/octet-stream';
+}
+
+async function createThumbnail(
+  contentKind: string,
+  filePath: string,
+  ownerUserId: string,
+  originalCreatedAt: string,
+  fileName: string,
+): Promise<string | null> {
+  if (contentKind === 'IMAGE') {
+    return createImageThumbnail(filePath, ownerUserId, originalCreatedAt, fileName);
+  }
+  if (contentKind === 'VIDEO') {
+    return createVideoThumbnail(filePath, ownerUserId, originalCreatedAt, fileName);
+  }
+  return null;
 }
 
 function publicPathFor(rootPath: string, ownerUserId: string, filePath: string): string {

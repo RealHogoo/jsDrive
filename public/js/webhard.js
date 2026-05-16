@@ -1,35 +1,8 @@
 (function (global) {
   "use strict";
 
-  var TOKEN_KEY = "webhard.accessToken";
-
-  function token() {
-    return localStorage.getItem(TOKEN_KEY) || "";
-  }
-
-  function saveToken(value) {
-    localStorage.setItem(TOKEN_KEY, value || "");
-  }
-
-  function bindTokenBox() {
-    var input = document.getElementById("token");
-    var button = document.getElementById("saveToken");
-    if (!input || !button) {
-      return;
-    }
-    input.value = token();
-    button.addEventListener("click", function () {
-      saveToken(input.value.trim());
-      button.textContent = "저장됨";
-      setTimeout(function () {
-        button.textContent = "저장";
-      }, 1200);
-    });
-  }
-
   function authHeaders() {
-    var value = token();
-    return value ? { Authorization: "Bearer " + value } : {};
+    return {};
   }
 
   function formatDateTime(value) {
@@ -43,39 +16,55 @@
     return date.toLocaleString("ko-KR", { hour12: false });
   }
 
-  function localDateTimeValue(date) {
-    var pad = function (n) { return String(n).padStart(2, "0"); };
-    return date.getFullYear() + "-" + pad(date.getMonth() + 1) + "-" + pad(date.getDate())
-      + "T" + pad(date.getHours()) + ":" + pad(date.getMinutes());
-  }
-
   function mediaCard(item) {
-    var mediaPath = item.file_id ? "/file/content/" + encodeURIComponent(item.file_id) : (item.public_path || "");
+    var mediaPath = item.file_id ? "/file/content/" + encodeURIComponent(item.file_id) : "";
     var media = mediaPath
       ? mediaElement(item, mediaPath)
       : "<div class=\"preview-media missing-media\">미리보기 없음</div>";
-    return "<article class=\"preview-card\">"
+    return "<article class=\"preview-card\" data-file-id=\"" + encodeURIComponent(item.file_id || "") + "\">"
       + "<a class=\"media-link\" href=\"/file-detail.html?file_id=" + encodeURIComponent(item.file_id || "") + "\">" + media + "</a>"
       + "<div class=\"preview-meta\">"
       + "<div class=\"preview-name\">" + escapeHtml(item.file_name) + "</div>"
       + "<div>" + kindLabel(item.content_kind) + " / " + formatSize(Number(item.file_size || 0)) + "</div>"
       + "<div>원본 생성일 " + formatDateTime(item.original_created_at) + "</div>"
+      + "<div class=\"card-actions\">"
+      + "<button class=\"btn danger\" type=\"button\" data-action=\"delete-file\" data-file-id=\"" + encodeURIComponent(item.file_id || "") + "\">삭제</button>"
+      + "</div>"
       + "</div>"
       + "</article>";
   }
 
   function mediaElement(item, publicPath) {
     if (item.content_kind === "VIDEO") {
-      return "<video class=\"preview-media\" src=\"" + escapeAttr(publicPath) + "\" controls preload=\"metadata\"></video>";
+      var videoPoster = item.thumbnail_path && item.file_id
+        ? " poster=\"/file/thumbnail/" + encodeURIComponent(item.file_id) + "\""
+        : "";
+      return "<video class=\"preview-media\" src=\"" + escapeAttr(publicPath) + "\" controls preload=\"metadata\"" + videoPoster + "></video>";
     }
     if (item.content_kind === "IMAGE") {
-      return "<img class=\"preview-media\" src=\"" + escapeAttr(publicPath) + "\" alt=\"\" loading=\"lazy\">";
+      var thumbnailPath = item.thumbnail_path && item.file_id
+        ? "/file/thumbnail/" + encodeURIComponent(item.file_id)
+        : publicPath;
+      return "<img class=\"preview-media\" src=\"" + escapeAttr(thumbnailPath) + "\" alt=\"\" loading=\"lazy\">";
     }
     return "<div class=\"preview-media document-preview\">"
       + "<span class=\"document-badge\">" + escapeHtml(fileExtension(item.file_name)) + "</span>"
       + "<strong>문서 파일</strong>"
       + "<small>상세 화면에서 다운로드</small>"
       + "</div>";
+  }
+
+  async function postJson(url, body) {
+    var response = await fetch(url, {
+      method: "POST",
+      headers: Object.assign({ "Content-Type": "application/json" }, authHeaders()),
+      body: JSON.stringify(body || {})
+    });
+    var data = await response.json();
+    if (!response.ok || data.ok !== true) {
+      throw new Error(data.message || "요청에 실패했습니다.");
+    }
+    return data.data;
   }
 
   function kindLabel(kind) {
@@ -121,11 +110,10 @@
   }
 
   global.Webhard = {
-    bindTokenBox: bindTokenBox,
     authHeaders: authHeaders,
     formatDateTime: formatDateTime,
-    localDateTimeValue: localDateTimeValue,
     mediaCard: mediaCard,
+    postJson: postJson,
     kindLabel: kindLabel,
     formatSize: formatSize
   };

@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>웹하드 검색</title>
+  <link rel="stylesheet" href="/assets/css/webhard.css">
+</head>
+<body>
+  <header class="topbar">
+    <strong>웹하드</strong>
+    <nav>
+      <a href="/upload.html">업로드</a>
+      <a href="/preview.html">미리보기</a>
+      <a class="active" href="/search.html">검색</a>
+      <a href="/download-jobs.html">다운로드</a>
+      <a href="/trash.html">휴지통</a>
+      <a href="/indexing.html">인덱싱</a>
+    </nav>
+  </header>
+  <main class="shell">
+    <section class="panel">
+      <h1>파일 검색</h1>
+      <div class="form-grid compact-grid">
+        <label>파일명 <input id="keyword" class="input" type="search" placeholder="파일명"></label>
+        <label>구분
+          <select id="contentKind" class="input">
+            <option value="ALL">전체</option>
+            <option value="IMAGE">이미지</option>
+            <option value="VIDEO">동영상</option>
+            <option value="DOCUMENT">문서</option>
+          </select>
+        </label>
+        <label>정렬 기준
+          <select id="sortBasis" class="input">
+            <option value="UPLOADED">업로드일시</option>
+            <option value="ORIGINAL_CREATED">원본 생성일</option>
+          </select>
+        </label>
+        <label>시작일 <input id="dateFrom" class="input" type="date"></label>
+        <label>종료일 <input id="dateTo" class="input" type="date"></label>
+      </div>
+      <div class="actions">
+        <button id="searchButton" class="btn primary" type="button">검색</button>
+      </div>
+      <div id="searchSummary" class="summary"></div>
+    </section>
+    <section class="panel">
+      <div id="searchGrid" class="preview-grid detail-grid"></div>
+      <div id="searchSentinel" class="feed-sentinel"></div>
+    </section>
+  </main>
+  <script src="/assets/js/webhard.js"></script>
+  <script src="/assets/js/search.js"></script>
+</body>
+</html>

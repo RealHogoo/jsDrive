@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>웹하드 휴지통</title>
+  <link rel="stylesheet" href="/assets/css/webhard.css">
+</head>
+<body>
+  <header class="topbar">
+    <strong>웹하드</strong>
+    <nav>
+      <a href="/upload.html">업로드</a>
+      <a href="/preview.html">미리보기</a>
+      <a href="/search.html">검색</a>
+      <a href="/download-jobs.html">다운로드</a>
+      <a class="active" href="/trash.html">휴지통</a>
+      <a href="/indexing.html">인덱싱</a>
+    </nav>
+  </header>
+  <main class="shell">
+    <section class="panel feed-head">
+      <h1>휴지통</h1>
+      <div class="actions">
+        <label class="inline-control">보존일
+          <input id="retentionDays" class="input small-input" type="number" min="1" value="30">
+        </label>
+        <button id="purgeOld" class="btn danger" type="button">오래된 파일 정리</button>
+      </div>
+      <div id="trashSummary" class="summary"></div>
+    </section>
+    <section class="panel">
+      <div id="trashGrid" class="preview-grid detail-grid"></div>
+      <div id="trashSentinel" class="feed-sentinel">불러오는 중입니다.</div>
+    </section>
+  </main>
+  <script src="/assets/js/webhard.js"></script>
+  <script src="/assets/js/trash.js"></script>
+</body>
+</html>
