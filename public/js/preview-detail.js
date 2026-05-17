@@ -68,7 +68,11 @@
     try {
       var data = await Webhard.postJson("/download/status.json", { job_id: jobId });
       if (data.status_cd === "DONE") {
-        downloadStatus.innerHTML = "<a class=\"btn primary\" href=\"/download/file/" + encodeURIComponent(jobId) + "\">다운로드</a>";
+        var link = document.createElement("a");
+        link.className = "btn primary";
+        link.href = "/download/file/" + encodeURIComponent(jobId);
+        link.textContent = "다운로드";
+        downloadStatus.replaceChildren(link);
         return;
       }
       if (data.status_cd === "FAILED") {

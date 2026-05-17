@@ -20,19 +20,10 @@
     }
     download.href = "/file/download/" + encodeURIComponent(fileId);
     try {
-      var response = await fetch("/file/detail.json", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ file_id: fileId })
-      });
-      var body = await response.json();
-      if (!response.ok || body.ok !== true) {
-        message.textContent = body.message || "파일 정보를 불러오지 못했습니다.";
-        return;
-      }
-      render(body.data);
+      var data = await Webhard.postJson("/file/detail.json", { file_id: fileId });
+      render(data);
     } catch (error) {
-      message.textContent = "파일 정보를 불러오지 못했습니다.";
+      message.textContent = error.message || "파일 정보를 불러오지 못했습니다.";
     }
   }
 
@@ -42,24 +33,33 @@
     fileKind.textContent = Webhard.kindLabel(item.content_kind);
     fileSize.textContent = Webhard.formatSize(Number(item.file_size || 0));
     fileCreatedAt.textContent = Webhard.formatDateTime(item.original_created_at);
-    if (item.content_kind === "VIDEO") {
-      viewer.innerHTML = "<video class=\"detail-media\" src=\"" + mediaPath + "\" controls autoplay></video>";
-      return;
-    }
-    if (item.content_kind === "IMAGE") {
-      viewer.innerHTML = "<img class=\"detail-media\" src=\"" + mediaPath + "\" alt=\"\">";
-      return;
-    }
-    viewer.innerHTML = "<div class=\"document-detail\">"
-      + "<strong>" + escapeHtml(item.file_name || "문서 파일") + "</strong>"
-      + "<span>브라우저 미리보기를 지원하지 않는 문서는 다운로드해서 확인하세요.</span>"
-      + "</div>";
+    viewer.replaceChildren(mediaElement(item, mediaPath));
   }
 
-  function escapeHtml(value) {
-    return String(value || "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;");
+  function mediaElement(item, mediaPath) {
+    if (item.content_kind === "VIDEO") {
+      var video = document.createElement("video");
+      video.className = "detail-media";
+      video.src = mediaPath;
+      video.controls = true;
+      video.autoplay = true;
+      return video;
+    }
+    if (item.content_kind === "IMAGE") {
+      var image = document.createElement("img");
+      image.className = "detail-media";
+      image.src = mediaPath;
+      image.alt = "";
+      return image;
+    }
+    var box = document.createElement("div");
+    var title = document.createElement("strong");
+    var hint = document.createElement("span");
+    box.className = "document-detail";
+    title.textContent = item.file_name || "문서 파일";
+    hint.textContent = "브라우저 미리보기를 지원하지 않는 문서는 다운로드해서 확인하세요.";
+    box.appendChild(title);
+    box.appendChild(hint);
+    return box;
   }
 })();
