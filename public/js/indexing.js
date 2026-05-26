@@ -18,7 +18,7 @@
     message.textContent = "인덱싱 시작 요청 중입니다.";
     try {
       var data = await Webhard.postJson("/index/start.json", {});
-      message.textContent = "인덱싱이 시작되었습니다. 진행 중에는 파일 등록이 차단됩니다.";
+      message.textContent = "인덱싱이 시작되었습니다. 진행 중에는 파일 등록을 차단합니다.";
       render(data);
       schedule();
     } catch (error) {

@@ -1,16 +1,16 @@
 # webhard-service
 
-`webhard-service`는 웹하드 파일/폴더/공유 링크 관리를 담당하는 NestJS + PostgreSQL 서비스입니다.
+`webhard-service`는 웹하드 파일, 폴더, 공유 링크를 관리하는 NestJS + PostgreSQL 서비스입니다.
 인증과 서비스 권한은 `admin-service`의 JWT와 `/auth/me.json` 응답을 기준으로 처리합니다.
 
 ## 역할
 
-- 개인별 폴더 목록/저장
-- 개인별 파일 목록/등록
+- 개인별 폴더 목록과 저장
+- 개인별 파일 목록, 등록, 업로드
 - 파일 또는 폴더 공유 링크 생성
 - PostgreSQL 기반 메타데이터 관리
-- 어드민 서비스 권한 연동
-- 헬스체크와 릴리즈 버전 확인
+- admin-service 권한 연동
+- 헬스체크와 릴리스 버전 확인
 
 ## 주요 API
 
@@ -21,10 +21,18 @@
   - `POST /file/list.json`
   - `POST /file/register.json`
   - `POST /file/upload.json`
+  - `POST /file/upload-batch.json`
 - 공유
   - `POST /share/create.json`
 - 미리보기
   - `POST /preview/list.json`
+  - `POST /preview/feed.json`
+  - `POST /preview/week-items.json`
+- 다운로드
+  - `POST /download/week/start.json`
+  - `POST /download/status.json`
+  - `POST /download/list.json`
+  - `POST /download/cleanup.json`
 - 운영
   - `POST /version.json`
   - `POST /health/live.json`
@@ -36,14 +44,14 @@
 `admin-service`의 `service_permissions`에서 `WEBHARD_SERVICE` 권한을 확인합니다.
 
 - 화면 진입: `WEBHARD_SERVICE` 권한 중 하나 이상 필요
-- `WRITE`: 폴더 저장, 파일 등록
+- `WRITE`: 폴더 저장, 파일 등록, 업로드
 - `SHARE`: 공유 링크 생성
-- `DELETE`: 삭제 API 확장 예정
+- `DELETE`: 삭제와 휴지통 정리
 
 관리자 역할(`ROLE_ADMIN`, `ROLE_SUPER_ADMIN`)은 서비스 권한 체크를 통과합니다.
-비로그인 사용자가 `/`, `/upload.html`, `/preview.html`에 접근하면 어드민 서비스 로그인 페이지로 이동합니다.
+비로그인 사용자가 `/`, `/upload.html`, `/preview.html` 등에 접근하면 admin-service 로그인 페이지로 이동합니다.
 
-## 실행
+## 로컬 실행
 
 기본 포트는 `8083`입니다.
 
@@ -62,11 +70,11 @@ npm install
 npm run start:dev
 ```
 
-로컬 개발 장비에 Node.js/npm이 필요합니다.
+로컬 개발 장비에는 Node.js와 npm이 필요합니다.
 
 ## Node 자동 설치 실행
 
-운영 서버에 Node.js가 없어도 `scripts/run-service.sh`가 `.runtime` 아래에 Node.js를 자동으로 내려받고 실행합니다.
+운영 서버에 Node.js가 없으면 `scripts/run-service.sh` 또는 `scripts/run-service.ps1`이 `.runtime` 아래에 Node.js를 자동으로 내려받고 실행합니다.
 
 Linux/NAS:
 
@@ -84,7 +92,7 @@ export WEBHARD_STORAGE_ROOT=/volume1/webhard
 sh scripts/run-service.sh
 ```
 
-인자로 넘길 수도 있습니다.
+인자로 넘겨도 됩니다.
 
 ```sh
 sh scripts/run-service.sh --storage-root=/volume1/webhard --port=8083
@@ -106,7 +114,7 @@ $env:WEBHARD_DB_PASSWORD="postgres"
 ```
 
 기본 Node 버전은 `v22.13.1`입니다. 운영에서 다른 버전을 쓰려면 `NODE_VERSION` 환경변수로 바꿀 수 있습니다.
-처음 실행 시에는 Node 다운로드, `npm install`, `npm run build`가 수행됩니다.
+처음 실행할 때 Node 다운로드, `npm install`, `npm run build`가 수행됩니다.
 
 ## 저장소 루트와 계정별 폴더
 
@@ -132,29 +140,29 @@ $env:WEBHARD_DB_PASSWORD="postgres"
 
 ## NAS 마운트 파일
 
-NAS 디렉터리를 서버에 마운트하고 `WEBHARD_STORAGE_ROOT`로 지정하면 새로 업로드되는 파일은 그 경로에 저장됩니다.
-다만 이미 NAS에 있던 과거 파일은 파일시스템에만 존재하고 `wh_file` 메타데이터가 없기 때문에 현재 화면에는 자동으로 나오지 않습니다.
+NAS 디렉터리를 서버에 마운트하고 `WEBHARD_STORAGE_ROOT`로 지정하면 새로 업로드되는 파일은 해당 경로에 저장됩니다.
+다만 이미 NAS에 있던 과거 파일은 파일시스템에만 있고 `wh_file` 메타데이터가 없기 때문에 현재 화면에는 자동으로 나오지 않습니다.
 
 과거 파일을 보려면 다음 중 하나가 필요합니다.
 
-- 파일 경로, 크기, MIME 타입, 원본 생성일을 `wh_file`에 등록하는 스캔/인덱싱 기능
-- 또는 `POST /file/register.json`으로 기존 파일을 하나씩 메타데이터 등록
+- 파일 경로, 크기, MIME 타입, 원본 생성일을 `wh_file`에 등록하는 스캔 또는 인덱싱 기능
+- `POST /file/register.json`으로 기존 파일을 하나씩 메타데이터에 등록
 
-사진/동영상의 실제 촬영일은 파일 수정일과 다를 수 있습니다. 정확한 원본 생성일 기준 미리보기를 하려면 추후 EXIF/동영상 메타데이터를 읽는 스캐너를 추가하는 것이 맞습니다.
+사진과 동영상의 실제 촬영일은 파일 수정일과 다를 수 있습니다. 정확한 원본 생성일 기준 미리보기를 하려면 추후 EXIF 또는 동영상 메타데이터를 읽는 스캔 기능을 추가하는 것이 좋습니다.
 
 ## DB
 
 PostgreSQL 스키마는 `docs/sql/postgres/schema.sql`에 있습니다.
 원본 생성일 기준 미리보기 메타데이터 추가 SQL은 `docs/sql/postgres/deploy-add-preview-metadata.sql`입니다.
 
-어드민 서비스 등록 SQL은 `docs/sql/postgres/admin-service-registration.sql`에 있습니다.
-운영 반영 시 `admin-service` DB에 먼저 적용해야 권한 화면과 `/auth/me.json`에서 웹하드 권한을 사용할 수 있습니다.
+admin-service 서비스 등록 SQL은 `docs/sql/postgres/admin-service-registration.sql`에 있습니다.
+운영 반영 때 `admin-service` DB에 먼저 적용해야 권한 화면과 `/auth/me.json`에서 웹하드 권한을 사용할 수 있습니다.
 
 ## 문서
 
 - 웹하드 설계: [docs/webhard/webhard.md](docs/webhard/webhard.md)
 - PostgreSQL 스키마: [docs/sql/postgres/schema.sql](docs/sql/postgres/schema.sql)
-- 어드민 등록 SQL: [docs/sql/postgres/admin-service-registration.sql](docs/sql/postgres/admin-service-registration.sql)
+- admin-service 등록 SQL: [docs/sql/postgres/admin-service-registration.sql](docs/sql/postgres/admin-service-registration.sql)
 
 ## 화면
 
@@ -163,5 +171,14 @@ PostgreSQL 스키마는 `docs/sql/postgres/schema.sql`에 있습니다.
 
 루트 `http://localhost:8083/`는 웹하드 메인 화면입니다.
 업로드 화면은 브라우저가 제공하는 파일 `lastModified` 값을 원본 생성일 기본값으로 사용합니다.
-사진/동영상 파일의 실제 촬영일이나 생성일이 다르면 업로드 전에 원본 생성일 입력값을 수정합니다.
+사진이나 동영상의 실제 촬영일과 생성일이 다르면 업로드 전에 원본 생성일 입력값을 수정합니다.
 미리보기 화면은 등록일이 아니라 `original_created_at` 기준으로 일별, 주별, 월별 조회합니다.
+
+## 검증
+
+```powershell
+npm run lint
+npm test -- --runInBand
+npm run build
+npm run check:encoding
+```
