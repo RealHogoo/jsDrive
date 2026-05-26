@@ -4,10 +4,12 @@
   var list = document.getElementById("downloadList");
   var summary = document.getElementById("downloadSummary");
   var sentinel = document.getElementById("downloadSentinel");
+  var cleanupButton = document.getElementById("cleanupDownloads");
   var offset = 0;
   var loading = false;
   var hasMore = true;
 
+  cleanupButton.addEventListener("click", cleanupDownloads);
   window.addEventListener("scroll", function () {
     if (isPageBottom()) {
       loadMore();
@@ -39,9 +41,32 @@
     }
   }
 
+  async function cleanupDownloads() {
+    var retentionDays = Number(document.getElementById("downloadRetentionDays").value || 7);
+    cleanupButton.disabled = true;
+    try {
+      var data = await Webhard.postJson("/download/cleanup.json", { retention_days: retentionDays });
+      summary.textContent = data.removed_count + "개 ZIP 파일을 정리했습니다.";
+      resetList();
+    } catch (error) {
+      summary.textContent = error.message;
+    } finally {
+      cleanupButton.disabled = false;
+    }
+  }
+
+  function resetList() {
+    offset = 0;
+    hasMore = true;
+    loading = false;
+    list.innerHTML = "";
+    loadMore();
+  }
+
   function jobRow(item) {
     var status = escapeHtml(item.status_cd || "-");
-    var download = item.status_cd === "DONE"
+    var canDownload = item.status_cd === "DONE" && item.download_name;
+    var download = canDownload
       ? "<a class=\"btn\" href=\"/download/file/" + encodeURIComponent(item.job_id) + "\">받기</a>"
       : "";
     return "<article class=\"job-row\">"

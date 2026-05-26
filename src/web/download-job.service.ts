@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { once } from 'events';
 import { createWriteStream, existsSync } from 'fs';
+import { unlink } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { ApiException } from '../common/api-exception';
@@ -18,6 +19,7 @@ export class DownloadJobService {
   constructor(private readonly databaseService: DatabaseService) {}
 
   async startWeekDownload(params: Record<string, unknown>, viewer: DownloadViewer): Promise<Record<string, unknown>> {
+    void this.cleanupExpiredJobs({}, viewer).catch(() => undefined);
     const weekStart = String(params.week_start || '');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(weekStart)) {
       throw ApiException.badRequest('week_start is required');
@@ -80,6 +82,47 @@ export class DownloadJobService {
       limit,
       next_offset: offset + rows.length,
       has_more: result.rows.length > limit,
+    };
+  }
+
+  async cleanupExpiredJobs(params: Record<string, unknown>, viewer: DownloadViewer): Promise<Record<string, unknown>> {
+    const retentionDays = Math.min(Math.max(optionalNumber(params.retention_days) || downloadRetentionDays(), 1), 3650);
+    const result = await this.databaseService.query<{ job_id: number; zip_path: string }>(
+      `
+      SELECT job_id, zip_path
+      FROM wh_download_job
+      WHERE owner_user_id = $1
+        AND zip_path IS NOT NULL
+        AND finished_at < CURRENT_TIMESTAMP - ($2::int * INTERVAL '1 day')
+      ORDER BY job_id ASC
+      LIMIT 200
+      `,
+      [viewer.userId, retentionDays],
+    );
+    let removedCount = 0;
+    for (const job of result.rows) {
+      if (job.zip_path && existsSync(job.zip_path)) {
+        await unlink(job.zip_path).then(() => {
+          removedCount++;
+        }).catch(() => undefined);
+      }
+      await this.databaseService.query(
+        `
+        UPDATE wh_download_job
+        SET zip_path = NULL,
+            message = 'download file expired',
+            updated_at = CURRENT_TIMESTAMP
+        WHERE job_id = $1
+          AND owner_user_id = $2
+        `,
+        [job.job_id, viewer.userId],
+      );
+    }
+    return {
+      retention_days: retentionDays,
+      scanned_count: result.rowCount || 0,
+      removed_count: removedCount,
+      has_more: (result.rowCount || 0) === 200,
     };
   }
 
@@ -280,6 +323,10 @@ function weekDownloadLimits(): { maxFiles: number; maxBytes: number } {
     maxBytes: positiveNumberEnv('WEBHARD_WEEK_DOWNLOAD_MAX_BYTES')
       || (positiveNumberEnv('WEBHARD_WEEK_DOWNLOAD_MAX_MB') || 2048) * 1024 * 1024,
   };
+}
+
+function downloadRetentionDays(): number {
+  return positiveNumberEnv('WEBHARD_DOWNLOAD_JOB_RETENTION_DAYS') || 7;
 }
 
 function positiveNumberEnv(key: string): number | null {

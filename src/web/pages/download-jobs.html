@@ -21,6 +21,12 @@
   <main class="shell">
     <section class="panel feed-head">
       <h1>다운로드 작업</h1>
+      <div class="actions">
+        <label class="inline-control">보존일
+          <input id="downloadRetentionDays" class="input small-input" type="number" min="1" value="7">
+        </label>
+        <button id="cleanupDownloads" class="btn" type="button">만료 ZIP 정리</button>
+      </div>
       <div id="downloadSummary" class="summary"></div>
     </section>
     <section class="panel">

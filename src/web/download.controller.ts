@@ -22,6 +22,11 @@ export class DownloadController {
   async list(@Body() body: Record<string, unknown> = {}, @Req() request: Request) {
     return ok(await this.downloadJobService.list(body, viewer(request)), traceId(request));
   }
+
+  @Post('download/cleanup.json')
+  async cleanup(@Body() body: Record<string, unknown> = {}, @Req() request: Request) {
+    return ok(await this.downloadJobService.cleanupExpiredJobs(body, viewer(request)), traceId(request));
+  }
 }
 
 function viewer(request: Request) {
