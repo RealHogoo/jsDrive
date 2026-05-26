@@ -26,7 +26,7 @@ export class HealthController {
     let db = 'UP';
     try {
       await this.databaseService.ping();
-    } catch (exception) {
+    } catch (_exception) {
       db = 'DOWN';
     }
     return ok({

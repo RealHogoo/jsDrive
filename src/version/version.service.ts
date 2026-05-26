@@ -29,7 +29,7 @@ function gitRevision(): string | null {
       return null;
     }
     return head.slice(0, 7);
-  } catch (exception) {
+  } catch (_exception) {
     return null;
   }
 }
