@@ -45,6 +45,21 @@ body {
   color: #fff;
 }
 
+.build-version {
+  position: fixed;
+  right: 12px;
+  bottom: 10px;
+  z-index: 20;
+  padding: 4px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #6b7280;
+  font-size: 11px;
+  line-height: 1.4;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+}
+
 .shell {
   width: 100%;
   max-width: 1180px;

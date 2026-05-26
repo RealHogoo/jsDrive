@@ -7,6 +7,7 @@ import { Public } from '../auth/public.decorator';
 import { authToken } from '../common/request-util';
 import { DatabaseService } from '../database/database.service';
 import { AdminServiceClient } from '../integration/admin/admin-service.client';
+import { VersionService } from '../version/version.service';
 import { DownloadJobService } from './download-job.service';
 
 @Controller()
@@ -15,6 +16,7 @@ export class WebController {
     private readonly adminServiceClient: AdminServiceClient,
     private readonly databaseService: DatabaseService,
     private readonly downloadJobService: DownloadJobService,
+    private readonly versionService: VersionService,
   ) {}
 
   @Public()
@@ -198,7 +200,8 @@ export class WebController {
       return;
     }
 
-    response.sendFile(pagePath(pageName));
+    const html = readFileSync(pagePath(pageName), 'utf8');
+    response.type('html').send(injectVersionBadge(html, this.versionService.version()));
   }
 
   private async currentUser(request: Request) {
@@ -303,3 +306,19 @@ const SAFE_INLINE_CONTENT_TYPES = new Set([
   'video/quicktime',
   'video/webm',
 ]);
+
+function injectVersionBadge(html: string, version: { service: string; revision: string }): string {
+  const badge = `<div class="build-version" aria-label="Git revision">${escapeHtml(version.service)} ${escapeHtml(version.revision)}</div>`;
+  if (html.includes('</body>')) {
+    return html.replace('</body>', `${badge}</body>`);
+  }
+  return `${html}${badge}`;
+}
+
+function escapeHtml(value: string): string {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
