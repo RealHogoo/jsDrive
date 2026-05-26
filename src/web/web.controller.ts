@@ -96,7 +96,14 @@ export class WebController {
       this.renderError(response, 404, '요청한 파일을 찾을 수 없습니다.');
       return;
     }
-    response.type(file.content_type || 'application/octet-stream');
+    const contentType = safeInlineContentType(file.content_type);
+    if (!contentType) {
+      response.download(file.storage_path, file.file_name || 'download');
+      return;
+    }
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    response.setHeader('Content-Security-Policy', "default-src 'none'; media-src 'self'; img-src 'self'; style-src 'none'; script-src 'none'; sandbox");
+    response.type(contentType);
     response.sendFile(file.storage_path);
   }
 
@@ -279,3 +286,20 @@ function trimTrailingSlash(value: string): string {
   }
   return normalized;
 }
+
+function safeInlineContentType(contentType: string | null | undefined): string | null {
+  const normalized = String(contentType || '').split(';')[0].trim().toLowerCase();
+  return SAFE_INLINE_CONTENT_TYPES.has(normalized) ? normalized : null;
+}
+
+const SAFE_INLINE_CONTENT_TYPES = new Set([
+  'image/avif',
+  'image/gif',
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'video/mp4',
+  'video/ogg',
+  'video/quicktime',
+  'video/webm',
+]);

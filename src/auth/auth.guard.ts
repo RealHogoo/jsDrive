@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Request } from 'express';
-import { authToken } from '../common/request-util';
+import { authTokenWithSource, isCrossSiteRequest } from '../common/request-util';
 import { AdminServiceClient } from '../integration/admin/admin-service.client';
 import { IS_PUBLIC_KEY } from './public.decorator';
 import { REQUIRED_PERMISSION_KEY } from './require-permission.decorator';
@@ -34,9 +34,12 @@ export class AuthGuard implements CanActivate {
       throw new ForbiddenException('허용되지 않은 요청 방식입니다.');
     }
 
-    const accessToken = authToken(request);
+    const { token: accessToken, source } = authTokenWithSource(request);
     if (!accessToken) {
       throw new UnauthorizedException('로그인이 필요합니다.');
+    }
+    if (source === 'cookie' && isCrossSiteRequest(request)) {
+      throw new ForbiddenException('인증 쿠키를 사용할 수 없는 요청입니다.');
     }
 
     const currentUser = await this.adminServiceClient.fetchCurrentUser(accessToken);
