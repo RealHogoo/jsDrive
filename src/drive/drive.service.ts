@@ -1,8 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import { randomUUID } from 'crypto';
+import { createHash, randomBytes, randomUUID, scryptSync } from 'crypto';
 import { mkdir, unlink, writeFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import { extname, isAbsolute, join, relative, resolve, sep } from 'path';
+import sharp from 'sharp';
 import { ApiException } from '../common/api-exception';
 import { safePathSegment, storageRoot } from '../common/storage-path';
 import { createImageThumbnail, createVideoThumbnail } from '../common/thumbnail';
@@ -75,11 +76,60 @@ export class DriveService {
     return { folder_id: result.rows[0]?.folder_id };
   }
 
+  async moveFolder(params: Record<string, unknown>, viewer: Viewer): Promise<Record<string, unknown>> {
+    const folderId = requiredNumber(params.folder_id, 'folder_id is required');
+    const parentFolderId = optionalNumber(params.parent_folder_id, 'parent_folder_id');
+    if (folderId === parentFolderId) {
+      throw ApiException.badRequest('folder cannot be moved under itself');
+    }
+    const result = await this.databaseService.query<{ folder_id: number }>(
+      `
+      WITH RECURSIVE descendants AS (
+        SELECT folder_id
+        FROM wh_folder
+        WHERE folder_id = $1
+          AND owner_user_id = $2
+        UNION ALL
+        SELECT child.folder_id
+        FROM wh_folder child
+        JOIN descendants parent ON child.parent_folder_id = parent.folder_id
+        WHERE child.owner_user_id = $2
+      )
+      UPDATE wh_folder
+      SET parent_folder_id = $3,
+          updated_at = CURRENT_TIMESTAMP,
+          updated_by = $2
+      WHERE folder_id = $1
+        AND owner_user_id = $2
+        AND deleted_yn = 'N'
+        AND (
+          $3::bigint IS NULL
+          OR (
+            $3::bigint NOT IN (SELECT folder_id FROM descendants)
+            AND EXISTS (
+              SELECT 1
+              FROM wh_folder target
+              WHERE target.folder_id = $3::bigint
+                AND target.owner_user_id = $2
+                AND target.deleted_yn = 'N'
+            )
+          )
+        )
+      RETURNING folder_id
+      `,
+      [folderId, viewer.userId, parentFolderId],
+    );
+    if (result.rowCount === 0) {
+      throw ApiException.badRequest('folder not found or invalid target folder');
+    }
+    return { folder_id: result.rows[0]?.folder_id, parent_folder_id: parentFolderId };
+  }
+
   async fileList(params: Record<string, unknown>, viewer: Viewer): Promise<Record<string, unknown>> {
     const folderId = optionalNumber(params.folder_id, 'folder_id');
     const result = await this.databaseService.query(
       `
-      SELECT file_id, folder_id, file_name, file_size, content_type, content_kind,
+      SELECT file_id, folder_id, file_name, display_name, file_size, content_type, content_kind,
              storage_path, public_path, thumbnail_path, original_created_at, created_at, updated_at
       FROM wh_file
       WHERE owner_user_id = $1
@@ -99,8 +149,8 @@ export class DriveService {
     }
     const result = await this.databaseService.query(
       `
-      SELECT file_id, folder_id, file_name, file_size, content_type, content_kind,
-             public_path, thumbnail_path, original_created_at, created_at, updated_at
+      SELECT file_id, folder_id, file_name, display_name, memo, tags, file_size, content_type, content_kind,
+             content_sha256, public_path, thumbnail_path, original_created_at, created_at, updated_at
       FROM wh_file
       WHERE file_id = $1
         AND owner_user_id = $2
@@ -111,7 +161,186 @@ export class DriveService {
     if (result.rowCount === 0) {
       throw ApiException.badRequest('file not found');
     }
+    const file = result.rows[0] as Record<string, unknown>;
+    const duplicateResult = await this.databaseService.query(
+      `
+      SELECT file_id, file_name, display_name, file_size, created_at
+      FROM wh_file
+      WHERE owner_user_id = $1
+        AND deleted_yn = 'N'
+        AND content_sha256 IS NOT NULL
+        AND content_sha256 = $2
+        AND file_id <> $3
+      ORDER BY created_at DESC, file_id DESC
+      LIMIT 10
+      `,
+      [viewer.userId, file.content_sha256 || null, fileId],
+    );
+    return { ...file, duplicates: duplicateResult.rows };
+  }
+
+  async updateFileMetadata(params: Record<string, unknown>, viewer: Viewer): Promise<Record<string, unknown>> {
+    const fileId = requiredNumber(params.file_id, 'file_id is required');
+    const fileName = optionalText(params.file_name);
+    const displayName = optionalText(params.display_name);
+    const memo = optionalText(params.memo);
+    const tags = normalizeTags(params.tags);
+    const result = await this.databaseService.query(
+      `
+      UPDATE wh_file
+      SET file_name = COALESCE($3, file_name),
+          display_name = $4,
+          memo = $5,
+          tags = $6,
+          updated_at = CURRENT_TIMESTAMP,
+          updated_by = $2
+      WHERE file_id = $1
+        AND owner_user_id = $2
+        AND deleted_yn = 'N'
+      RETURNING file_id, file_name, display_name, memo, tags, updated_at
+      `,
+      [fileId, viewer.userId, fileName, displayName, memo, tags],
+    );
+    if (result.rowCount === 0) {
+      throw ApiException.badRequest('file not found');
+    }
     return result.rows[0];
+  }
+
+  async moveFile(params: Record<string, unknown>, viewer: Viewer): Promise<Record<string, unknown>> {
+    const fileId = requiredNumber(params.file_id, 'file_id is required');
+    const folderId = optionalNumber(params.folder_id, 'folder_id');
+    const result = await this.databaseService.query(
+      `
+      UPDATE wh_file
+      SET folder_id = $3,
+          updated_at = CURRENT_TIMESTAMP,
+          updated_by = $2
+      WHERE file_id = $1
+        AND owner_user_id = $2
+        AND deleted_yn = 'N'
+        AND (
+          $3::bigint IS NULL
+          OR EXISTS (
+            SELECT 1
+            FROM wh_folder
+            WHERE folder_id = $3::bigint
+              AND owner_user_id = $2
+              AND deleted_yn = 'N'
+          )
+        )
+      RETURNING file_id, folder_id
+      `,
+      [fileId, viewer.userId, folderId],
+    );
+    if (result.rowCount === 0) {
+      throw ApiException.badRequest('file not found or invalid target folder');
+    }
+    return result.rows[0];
+  }
+
+  async duplicates(params: Record<string, unknown>, viewer: Viewer): Promise<Record<string, unknown>> {
+    const minCount = Math.min(Math.max(optionalNumber(params.min_count, 'min_count') || 2, 2), 20);
+    const result = await this.databaseService.query(
+      `
+      SELECT content_sha256,
+             COUNT(*) AS file_count,
+             SUM(file_size) AS total_bytes,
+             MIN(file_size) AS file_size,
+             MAX(updated_at) AS updated_at
+      FROM wh_file
+      WHERE owner_user_id = $1
+        AND deleted_yn = 'N'
+        AND content_sha256 IS NOT NULL
+      GROUP BY content_sha256
+      HAVING COUNT(*) >= $2
+      ORDER BY total_bytes DESC, file_count DESC
+      LIMIT 50
+      `,
+      [viewer.userId, minCount],
+    );
+    return { items: result.rows };
+  }
+
+  async dashboardSummary(_params: Record<string, unknown>, viewer: Viewer): Promise<Record<string, unknown>> {
+    const includeAllUsers = isAdminViewer(viewer);
+    const totals = await this.databaseService.query(
+      `
+      SELECT COUNT(*) AS file_count,
+             COALESCE(SUM(file_size), 0) AS total_bytes,
+             COUNT(*) FILTER (WHERE deleted_yn = 'Y') AS trash_count,
+             COALESCE(SUM(file_size) FILTER (WHERE deleted_yn = 'Y'), 0) AS trash_bytes
+      FROM wh_file
+      WHERE ($2::boolean OR owner_user_id = $1)
+      `,
+      [viewer.userId, includeAllUsers],
+    );
+    const byKind = await this.databaseService.query(
+      `
+      SELECT content_kind, COUNT(*) AS file_count, COALESCE(SUM(file_size), 0) AS total_bytes
+      FROM wh_file
+      WHERE ($2::boolean OR owner_user_id = $1)
+        AND deleted_yn = 'N'
+      GROUP BY content_kind
+      ORDER BY total_bytes DESC
+      `,
+      [viewer.userId, includeAllUsers],
+    );
+    const folders = await this.databaseService.query(
+      `
+      SELECT COUNT(*) AS folder_count
+      FROM wh_folder
+      WHERE ($2::boolean OR owner_user_id = $1)
+        AND deleted_yn = 'N'
+      `,
+      [viewer.userId, includeAllUsers],
+    );
+    const duplicateGroups = await this.databaseService.query(
+      `
+      SELECT COUNT(*) AS duplicate_group_count,
+             COALESCE(SUM((file_count - 1) * file_size), 0) AS reclaimable_bytes
+      FROM (
+        SELECT content_sha256, COUNT(*) AS file_count, MIN(file_size) AS file_size
+        FROM wh_file
+        WHERE ($2::boolean OR owner_user_id = $1)
+          AND deleted_yn = 'N'
+          AND content_sha256 IS NOT NULL
+        GROUP BY content_sha256
+        HAVING COUNT(*) > 1
+      ) dup
+      `,
+      [viewer.userId, includeAllUsers],
+    );
+    const recent = await this.databaseService.query(
+      `
+      SELECT owner_user_id, file_id, file_name, display_name, file_size, content_kind, created_at
+      FROM wh_file
+      WHERE ($2::boolean OR owner_user_id = $1)
+        AND deleted_yn = 'N'
+      ORDER BY created_at DESC, file_id DESC
+      LIMIT 8
+      `,
+      [viewer.userId, includeAllUsers],
+    );
+    const byOwner = includeAllUsers ? await this.databaseService.query(
+      `
+      SELECT owner_user_id, COUNT(*) AS file_count, COALESCE(SUM(file_size), 0) AS total_bytes
+      FROM wh_file
+      WHERE deleted_yn = 'N'
+      GROUP BY owner_user_id
+      ORDER BY total_bytes DESC, file_count DESC
+      LIMIT 20
+      `,
+    ) : { rows: [] };
+    return {
+      scope: includeAllUsers ? 'ALL_USERS' : 'CURRENT_USER',
+      totals: totals.rows[0] || {},
+      folders: folders.rows[0] || {},
+      by_kind: byKind.rows,
+      by_owner: byOwner.rows,
+      duplicates: duplicateGroups.rows[0] || {},
+      recent_files: recent.rows,
+    };
   }
 
   async deleteFile(params: Record<string, unknown>, viewer: Viewer): Promise<Record<string, unknown>> {
@@ -141,7 +370,7 @@ export class DriveService {
     const limit = Math.min(Math.max(optionalNumber(params.limit, 'limit') || 20, 1), 100);
     const result = await this.databaseService.query(
       `
-      SELECT file_id, folder_id, file_name, file_size, content_type, content_kind,
+      SELECT file_id, folder_id, file_name, display_name, file_size, content_type, content_kind,
              thumbnail_path, original_created_at, created_at, deleted_at
       FROM wh_file
       WHERE owner_user_id = $1
@@ -248,12 +477,17 @@ export class DriveService {
 
     const result = await this.databaseService.query(
       `
-      SELECT file_id, folder_id, file_name, file_size, content_type, content_kind,
+      SELECT file_id, folder_id, file_name, display_name, file_size, content_type, content_kind,
              public_path, thumbnail_path, original_created_at, created_at
       FROM wh_file
       WHERE owner_user_id = $1
         AND deleted_yn = 'N'
-        AND ($2::varchar IS NULL OR lower(file_name) LIKE '%' || lower($2) || '%')
+        AND (
+          $2::varchar IS NULL
+          OR lower(file_name) LIKE '%' || lower($2) || '%'
+          OR lower(COALESCE(display_name, '')) LIKE '%' || lower($2) || '%'
+          OR lower(COALESCE(tags, '')) LIKE '%' || lower($2) || '%'
+        )
         AND ($3::varchar IS NULL OR content_kind = $3)
         AND ($4::timestamp IS NULL OR ${dateColumn} >= $4::timestamp)
         AND ($5::timestamp IS NULL OR ${dateColumn} < $5::timestamp)
@@ -333,18 +567,19 @@ export class DriveService {
     const contentType = optionalText(params.content_type) || 'application/octet-stream';
     const contentKind = contentKindFor(contentType, fileName);
     const originalCreatedAt = optionalTimestamp(params.original_created_at, 'original_created_at');
+    const contentSha256 = optionalText(params.content_sha256);
 
     const result = await this.databaseService.query<{ file_id: number }>(
       `
       INSERT INTO wh_file (
         owner_user_id, folder_id, file_name, file_size, content_type, content_kind,
-        storage_path, public_path, original_created_at, created_by, updated_by
+        storage_path, public_path, original_created_at, content_sha256, created_by, updated_by
       ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, CAST($9 AS timestamp), $1, $1
+        $1, $2, $3, $4, $5, $6, $7, $8, CAST($9 AS timestamp), $10, $1, $1
       )
       RETURNING file_id
       `,
-      [viewer.userId, folderId, fileName, fileSize, contentType, contentKind, storagePath, null, originalCreatedAt],
+      [viewer.userId, folderId, fileName, fileSize, contentType, contentKind, storagePath, null, originalCreatedAt, contentSha256],
     );
     return { file_id: result.rows[0]?.file_id };
   }
@@ -367,16 +602,19 @@ export class DriveService {
     if (contentKind === 'OTHER') {
       throw ApiException.badRequest('image, video, and document files can be uploaded');
     }
+    const contentSha256 = fileHash(file);
+    const detectedOriginalCreatedAt = await detectOriginalCreatedAt(file, originalCreatedAt, contentKind);
 
-    const stored = await saveUploadedFile(file, originalCreatedAt, viewer.userId, fileName);
-    const thumbnailPath = await createThumbnail(contentKind, stored.storagePath, viewer.userId, originalCreatedAt, stored.storedName);
+    const stored = await saveUploadedFile(file, detectedOriginalCreatedAt, viewer.userId, fileName);
+    const thumbnailPath = await createThumbnail(contentKind, stored.storagePath, viewer.userId, detectedOriginalCreatedAt, stored.storedName);
+    const duplicateInfo = await this.duplicateInfo(viewer.userId, contentSha256);
     const result = await this.databaseService.query<{ file_id: number }>(
       `
       INSERT INTO wh_file (
         owner_user_id, folder_id, file_name, file_size, content_type, content_kind,
-        storage_path, public_path, thumbnail_path, original_created_at, created_by, updated_by
+        storage_path, public_path, thumbnail_path, original_created_at, content_sha256, created_by, updated_by
       ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, CAST($10 AS timestamp), $1, $1
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, CAST($10 AS timestamp), $11, $1, $1
       )
       RETURNING file_id
       `,
@@ -390,15 +628,19 @@ export class DriveService {
         stored.storagePath,
         stored.publicPath,
         thumbnailPath,
-        originalCreatedAt,
+        detectedOriginalCreatedAt,
+        contentSha256,
       ],
     );
     return {
       file_id: result.rows[0]?.file_id,
       public_path: stored.publicPath,
-      original_created_at: originalCreatedAt,
+      original_created_at: detectedOriginalCreatedAt,
       content_kind: contentKind,
       thumbnail_path: thumbnailPath,
+      content_sha256: contentSha256,
+      duplicate_count: duplicateInfo.count,
+      duplicate_files: duplicateInfo.items,
     };
   }
 
@@ -425,17 +667,20 @@ export class DriveService {
       if (contentKind === 'OTHER') {
         throw ApiException.badRequest('image, video, and document files can be uploaded');
       }
-      const originalCreatedAt = optionalTimestamp(originalCreatedAtList[index], 'original_created_at')
+      const requestedOriginalCreatedAt = optionalTimestamp(originalCreatedAtList[index], 'original_created_at')
         || new Date().toISOString();
+      const originalCreatedAt = await detectOriginalCreatedAt(file, requestedOriginalCreatedAt, contentKind);
+      const contentSha256 = fileHash(file);
+      const duplicateInfo = await this.duplicateInfo(viewer.userId, contentSha256);
       const stored = await saveUploadedFile(file, originalCreatedAt, viewer.userId, fileName);
       const thumbnailPath = await createThumbnail(contentKind, stored.storagePath, viewer.userId, originalCreatedAt, stored.storedName);
       const result = await this.databaseService.query<{ file_id: number }>(
         `
         INSERT INTO wh_file (
           owner_user_id, folder_id, file_name, file_size, content_type, content_kind,
-          storage_path, public_path, thumbnail_path, original_created_at, created_by, updated_by
+          storage_path, public_path, thumbnail_path, original_created_at, content_sha256, created_by, updated_by
         ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9, CAST($10 AS timestamp), $1, $1
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, CAST($10 AS timestamp), $11, $1, $1
         )
         RETURNING file_id
         `,
@@ -450,6 +695,7 @@ export class DriveService {
           stored.publicPath,
           thumbnailPath,
           originalCreatedAt,
+          contentSha256,
         ],
       );
       items.push({
@@ -459,6 +705,9 @@ export class DriveService {
         original_created_at: originalCreatedAt,
         content_kind: contentKind,
         thumbnail_path: thumbnailPath,
+        content_sha256: contentSha256,
+        duplicate_count: duplicateInfo.count,
+        duplicate_files: duplicateInfo.items,
       });
     }
 
@@ -475,7 +724,7 @@ export class DriveService {
 
     const result = await this.databaseService.query(
       `
-      SELECT file_id, folder_id, file_name, file_size, content_type, content_kind,
+      SELECT file_id, folder_id, file_name, display_name, file_size, content_type, content_kind,
              public_path, thumbnail_path, original_created_at, created_at
       FROM wh_file
       WHERE owner_user_id = $1
@@ -540,7 +789,7 @@ export class DriveService {
     const itemResult = await this.databaseService.query(
       `
       WITH ranked AS (
-        SELECT file_id, folder_id, file_name, file_size, content_type, content_kind,
+        SELECT file_id, folder_id, file_name, display_name, file_size, content_type, content_kind,
                public_path, thumbnail_path, original_created_at, created_at,
                row_number() OVER (
                  PARTITION BY date_trunc('week', ${dateColumn})::date
@@ -553,7 +802,7 @@ export class DriveService {
           AND ${dateColumn} < CAST($3 AS timestamp)
           AND ($4::varchar IS NULL OR content_kind = $4)
       )
-      SELECT file_id, folder_id, file_name, file_size, content_type, content_kind,
+      SELECT file_id, folder_id, file_name, display_name, file_size, content_type, content_kind,
              public_path, thumbnail_path, original_created_at, created_at
       FROM ranked
       WHERE rn <= $5
@@ -590,7 +839,7 @@ export class DriveService {
 
     const result = await this.databaseService.query(
       `
-      SELECT file_id, folder_id, file_name, file_size, content_type, content_kind,
+      SELECT file_id, folder_id, file_name, display_name, file_size, content_type, content_kind,
              public_path, thumbnail_path, original_created_at, created_at
       FROM wh_file
       WHERE owner_user_id = $1
@@ -633,18 +882,44 @@ export class DriveService {
       throw ApiException.badRequest('file_id or folder_id is required');
     }
     const expiresAt = optionalText(params.expires_at);
+    const password = optionalText(params.password);
+    const passwordHash = password ? hashPassword(password) : null;
+    const maxDownloadCount = optionalNumber(params.max_download_count, 'max_download_count');
     const result = await this.databaseService.query<{ share_id: number; share_token: string }>(
       `
       INSERT INTO wh_share (
-        owner_user_id, folder_id, file_id, share_token, expires_at, created_by, updated_by
+        owner_user_id, folder_id, file_id, share_token, password_hash,
+        max_download_count, expires_at, created_by, updated_by
       ) VALUES (
-        $1, $2, $3, encode(gen_random_bytes(24), 'hex'), CAST($4 AS timestamp), $1, $1
+        $1, $2, $3, encode(gen_random_bytes(24), 'hex'), $4,
+        $5, CAST($6 AS timestamp), $1, $1
       )
       RETURNING share_id, share_token
       `,
-      [viewer.userId, folderId, fileId, expiresAt],
+      [viewer.userId, folderId, fileId, passwordHash, maxDownloadCount, expiresAt],
     );
-    return result.rows[0] || {};
+    return {
+      ...(result.rows[0] || {}),
+      expires_at: expiresAt,
+      max_download_count: maxDownloadCount,
+      password_required: !!passwordHash,
+    };
+  }
+
+  private async duplicateInfo(ownerUserId: string, contentSha256: string): Promise<{ count: number; items: Record<string, unknown>[] }> {
+    const result = await this.databaseService.query(
+      `
+      SELECT file_id, file_name, display_name, file_size, created_at
+      FROM wh_file
+      WHERE owner_user_id = $1
+        AND deleted_yn = 'N'
+        AND content_sha256 = $2
+      ORDER BY created_at DESC, file_id DESC
+      LIMIT 10
+      `,
+      [ownerUserId, contentSha256],
+    );
+    return { count: result.rowCount || 0, items: result.rows };
   }
 }
 
@@ -654,6 +929,55 @@ function requiredText(value: unknown, message: string): string {
     throw ApiException.badRequest(message);
   }
   return text;
+}
+
+function normalizeTags(value: unknown): string | null {
+  const text = optionalText(value);
+  if (!text) {
+    return null;
+  }
+  return text
+    .split(',')
+    .map((tag) => tag.trim())
+    .filter(Boolean)
+    .slice(0, 30)
+    .join(', ');
+}
+
+function fileHash(file: Express.Multer.File): string {
+  return createHash('sha256').update(file.buffer).digest('hex');
+}
+
+async function detectOriginalCreatedAt(
+  file: Express.Multer.File,
+  fallback: string,
+  contentKind: string,
+): Promise<string> {
+  if (contentKind !== 'IMAGE') {
+    return fallback;
+  }
+  try {
+    const metadata = await sharp(file.buffer).metadata();
+    const exif = metadata.exif?.toString('latin1') || '';
+    const match = exif.match(/(20\d{2}|19\d{2}):(\d{2}):(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/);
+    if (!match) {
+      return fallback;
+    }
+    const parsed = new Date(`${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:${match[6]}.000Z`);
+    return Number.isNaN(parsed.getTime()) ? fallback : parsed.toISOString();
+  } catch {
+    return fallback;
+  }
+}
+
+function hashPassword(password: string): string {
+  const salt = randomBytes(16).toString('hex');
+  const hash = scryptSync(password, salt, 32).toString('hex');
+  return `scrypt:${salt}:${hash}`;
+}
+
+function isAdminViewer(viewer: Viewer): boolean {
+  return viewer.roles.some((role) => role === 'ROLE_ADMIN' || role === 'ROLE_SUPER_ADMIN');
 }
 
 function optionalText(value: unknown): string | null {

@@ -38,6 +38,12 @@ export class WebController {
   }
 
   @Public()
+  @Get('dashboard.html')
+  async dashboard(@Req() request: Request, @Res() response: Response): Promise<void> {
+    await this.renderProtectedPage(request, response, 'dashboard.html');
+  }
+
+  @Public()
   @Get('preview.html')
   async preview(@Req() request: Request, @Res() response: Response): Promise<void> {
     await this.renderProtectedPage(request, response, 'preview.html');
@@ -188,7 +194,7 @@ export class WebController {
   private async renderProtectedPage(
     request: Request,
     response: Response,
-    pageName: 'index.html' | 'upload.html' | 'preview.html' | 'preview-detail.html' | 'file-detail.html' | 'trash.html' | 'search.html' | 'download-jobs.html' | 'indexing.html',
+    pageName: 'index.html' | 'upload.html' | 'dashboard.html' | 'preview.html' | 'preview-detail.html' | 'file-detail.html' | 'trash.html' | 'search.html' | 'download-jobs.html' | 'indexing.html',
   ): Promise<void> {
     const currentUser = await this.currentUser(request);
     if (!currentUser) {

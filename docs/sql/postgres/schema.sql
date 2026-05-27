@@ -27,6 +27,10 @@ CREATE TABLE IF NOT EXISTS wh_file (
     public_path   VARCHAR(1000),
     thumbnail_path VARCHAR(1000),
     original_created_at TIMESTAMP,
+    display_name  VARCHAR(255),
+    memo          TEXT,
+    tags          VARCHAR(1000),
+    content_sha256 VARCHAR(64),
     deleted_yn    CHAR(1) NOT NULL DEFAULT 'N',
     deleted_at    TIMESTAMP,
     created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -44,6 +48,9 @@ CREATE TABLE IF NOT EXISTS wh_share (
     folder_id     BIGINT,
     file_id       BIGINT,
     share_token   VARCHAR(64) NOT NULL UNIQUE,
+    password_hash VARCHAR(255),
+    max_download_count INTEGER,
+    download_count INTEGER NOT NULL DEFAULT 0,
     expires_at    TIMESTAMP,
     revoked_yn    CHAR(1) NOT NULL DEFAULT 'N',
     created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -136,3 +143,10 @@ CREATE INDEX IF NOT EXISTS idx_wh_file_08
 
 CREATE INDEX IF NOT EXISTS idx_wh_file_09
     ON wh_file (owner_user_id, deleted_yn, content_kind, created_at DESC, file_id DESC);
+
+CREATE INDEX IF NOT EXISTS idx_wh_file_10
+    ON wh_file (owner_user_id, content_sha256)
+    WHERE content_sha256 IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_wh_file_11
+    ON wh_file USING GIN (lower(tags) gin_trgm_ops);

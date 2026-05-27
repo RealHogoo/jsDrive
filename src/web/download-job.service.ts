@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { once } from 'events';
 import { createWriteStream, existsSync } from 'fs';
@@ -15,8 +15,26 @@ export interface DownloadViewer {
 }
 
 @Injectable()
-export class DownloadJobService {
+export class DownloadJobService implements OnModuleInit, OnModuleDestroy {
+  private cleanupTimer: NodeJS.Timeout | null = null;
+
   constructor(private readonly databaseService: DatabaseService) {}
+
+  onModuleInit(): void {
+    const intervalHours = positiveNumberEnv('WEBHARD_DOWNLOAD_CLEANUP_INTERVAL_HOURS') || 24;
+    this.cleanupTimer = setInterval(() => {
+      void this.cleanupExpiredJobsForAll().catch(() => undefined);
+    }, intervalHours * 60 * 60 * 1000);
+    this.cleanupTimer.unref?.();
+    void this.cleanupExpiredJobsForAll().catch(() => undefined);
+  }
+
+  onModuleDestroy(): void {
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = null;
+    }
+  }
 
   async startWeekDownload(params: Record<string, unknown>, viewer: DownloadViewer): Promise<Record<string, unknown>> {
     void this.cleanupExpiredJobs({}, viewer).catch(() => undefined);
@@ -123,6 +141,46 @@ export class DownloadJobService {
       scanned_count: result.rowCount || 0,
       removed_count: removedCount,
       has_more: (result.rowCount || 0) === 200,
+    };
+  }
+
+  async cleanupExpiredJobsForAll(params: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+    const retentionDays = Math.min(Math.max(optionalNumber(params.retention_days) || downloadRetentionDays(), 1), 3650);
+    const result = await this.databaseService.query<{ job_id: number; owner_user_id: string; zip_path: string }>(
+      `
+      SELECT job_id, owner_user_id, zip_path
+      FROM wh_download_job
+      WHERE zip_path IS NOT NULL
+        AND finished_at < CURRENT_TIMESTAMP - ($1::int * INTERVAL '1 day')
+      ORDER BY job_id ASC
+      LIMIT 500
+      `,
+      [retentionDays],
+    );
+    let removedCount = 0;
+    for (const job of result.rows) {
+      if (job.zip_path && existsSync(job.zip_path)) {
+        await unlink(job.zip_path).then(() => {
+          removedCount++;
+        }).catch(() => undefined);
+      }
+      await this.databaseService.query(
+        `
+        UPDATE wh_download_job
+        SET zip_path = NULL,
+            message = 'download file expired',
+            updated_at = CURRENT_TIMESTAMP
+        WHERE job_id = $1
+          AND owner_user_id = $2
+        `,
+        [job.job_id, job.owner_user_id],
+      );
+    }
+    return {
+      retention_days: retentionDays,
+      scanned_count: result.rowCount || 0,
+      removed_count: removedCount,
+      has_more: (result.rowCount || 0) === 500,
     };
   }
 

@@ -28,6 +28,12 @@ export class DriveController {
     return ok(await this.driveService.saveFolder(body, viewer(request)), traceId(request));
   }
 
+  @RequirePermission('WRITE')
+  @Post('folder/move.json')
+  async moveFolder(@Body() body: Record<string, unknown>, @Req() request: Request) {
+    return ok(await this.driveService.moveFolder(body, viewer(request)), traceId(request));
+  }
+
   @Post('file/list.json')
   async fileList(@Body() body: Record<string, unknown> = {}, @Req() request: Request) {
     return ok(await this.driveService.fileList(body, viewer(request)), traceId(request));
@@ -41,6 +47,28 @@ export class DriveController {
   @Post('file/detail.json')
   async fileDetail(@Body() body: Record<string, unknown> = {}, @Req() request: Request) {
     return ok(await this.driveService.fileDetail(body, viewer(request)), traceId(request));
+  }
+
+  @RequirePermission('WRITE')
+  @Post('file/metadata.json')
+  async fileMetadata(@Body() body: Record<string, unknown> = {}, @Req() request: Request) {
+    return ok(await this.driveService.updateFileMetadata(body, viewer(request)), traceId(request));
+  }
+
+  @RequirePermission('WRITE')
+  @Post('file/move.json')
+  async moveFile(@Body() body: Record<string, unknown> = {}, @Req() request: Request) {
+    return ok(await this.driveService.moveFile(body, viewer(request)), traceId(request));
+  }
+
+  @Post('file/duplicates.json')
+  async duplicateFiles(@Body() body: Record<string, unknown> = {}, @Req() request: Request) {
+    return ok(await this.driveService.duplicates(body, viewer(request)), traceId(request));
+  }
+
+  @Post('dashboard/summary.json')
+  async dashboardSummary(@Body() body: Record<string, unknown> = {}, @Req() request: Request) {
+    return ok(await this.driveService.dashboardSummary(body, viewer(request)), traceId(request));
   }
 
   @RequirePermission('DELETE')

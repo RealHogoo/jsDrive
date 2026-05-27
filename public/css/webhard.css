@@ -561,6 +561,64 @@ label {
   gap: 8px;
 }
 
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.metric-card {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid #dbe2ef;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.metric-card span,
+.stat-row span {
+  color: #64748b;
+  font-weight: 700;
+}
+
+.metric-card strong {
+  font-size: 22px;
+}
+
+.stat-list {
+  display: grid;
+  gap: 8px;
+}
+
+.stat-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(90px, auto) minmax(100px, auto);
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid #dbe2ef;
+  border-radius: 8px;
+}
+
+.stat-row strong {
+  overflow-wrap: anywhere;
+}
+
+.stat-row em {
+  font-style: normal;
+  font-weight: 800;
+  text-align: right;
+}
+
+.management-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
 .job-list {
   display: grid;
   gap: 10px;

@@ -11,6 +11,7 @@
     <strong>웹하드</strong>
     <nav>
       <a href="/upload.html">업로드</a>
+      <a href="/dashboard.html">현황</a>
       <a class="active" href="/preview.html">미리보기</a>
       <a href="/search.html">검색</a>
       <a href="/download-jobs.html">다운로드</a>
@@ -39,7 +40,38 @@
           <dt>원본 생성일</dt>
           <dd id="fileCreatedAt">-</dd>
         </div>
+        <div>
+          <dt>해시</dt>
+          <dd id="fileHash">-</dd>
+        </div>
       </dl>
+      <div class="management-grid">
+        <form id="metadataForm" class="panel">
+          <h2>표시 정보</h2>
+          <label>파일명<input id="editFileName" class="input" type="text"></label>
+          <label>표시명<input id="displayName" class="input" type="text"></label>
+          <label>메모<textarea id="fileMemo" class="input" rows="3"></textarea></label>
+          <label>태그<input id="fileTags" class="input" type="text" placeholder="쉼표로 구분"></label>
+          <button class="btn primary" type="submit">저장</button>
+        </form>
+        <form id="moveForm" class="panel">
+          <h2>위치 이동</h2>
+          <label>대상 폴더 ID<input id="targetFolderId" class="input" type="number" min="1" placeholder="비우면 루트"></label>
+          <button class="btn" type="submit">이동</button>
+        </form>
+        <form id="shareForm" class="panel">
+          <h2>공유 링크</h2>
+          <label>만료일시<input id="shareExpiresAt" class="input" type="datetime-local"></label>
+          <label>비밀번호<input id="sharePassword" class="input" type="password"></label>
+          <label>다운로드 제한<input id="shareMaxDownloads" class="input" type="number" min="1" placeholder="제한 없음"></label>
+          <button class="btn" type="submit">공유 생성</button>
+          <div id="shareResult" class="summary"></div>
+        </form>
+      </div>
+      <section class="panel">
+        <h2>중복 파일</h2>
+        <div id="duplicateList" class="stat-list"></div>
+      </section>
       <div id="message" class="message"></div>
     </section>
   </main>

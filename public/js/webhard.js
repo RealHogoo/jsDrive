@@ -24,7 +24,7 @@
     return "<article class=\"preview-card\" data-file-id=\"" + encodeURIComponent(item.file_id || "") + "\">"
       + "<a class=\"media-link\" href=\"/file-detail.html?file_id=" + encodeURIComponent(item.file_id || "") + "\">" + media + "</a>"
       + "<div class=\"preview-meta\">"
-      + "<div class=\"preview-name\">" + escapeHtml(item.file_name) + "</div>"
+      + "<div class=\"preview-name\">" + escapeHtml(item.display_name || item.file_name) + "</div>"
       + "<div>" + kindLabel(item.content_kind) + " / " + formatSize(Number(item.file_size || 0)) + "</div>"
       + "<div>원본 생성일 " + formatDateTime(item.original_created_at) + "</div>"
       + "<div class=\"card-actions\">"
