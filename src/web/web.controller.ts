@@ -96,7 +96,7 @@ export class WebController {
   @Get('s/:token')
   async sharePage(@Param('token') token: string, @Res() response: Response): Promise<void> {
     const bootstrap = `<script>window.WEBHARD_SHARE_TOKEN=${JSON.stringify(token || '')};</script>`;
-    const html = readFileSync(pagePath('share.html'), 'utf8').replace('</head>', `${bootstrap}</head>`);
+    const html = pageHtml('share.html').replace('</head>', `${bootstrap}</head>`);
     response.type('html').send(html);
   }
 
@@ -262,7 +262,7 @@ export class WebController {
       return;
     }
 
-    const html = readFileSync(pagePath(pageName), 'utf8');
+    const html = pageHtml(pageName);
     response.type('html').send(injectVersionBadge(html, this.versionService.version()));
   }
 
@@ -277,7 +277,7 @@ export class WebController {
   private renderError(response: Response, status: number, message?: string): void {
     const bootstrap = `<script>window.WEBHARD_ERROR_CODE=${JSON.stringify(String(status))};`
       + `window.WEBHARD_ERROR_MESSAGE=${JSON.stringify(message || '')};</script>`;
-    const html = readFileSync(pagePath('error.html'), 'utf8').replace('</head>', `${bootstrap}</head>`);
+    const html = pageHtml('error.html').replace('</head>', `${bootstrap}</head>`);
     response.status(status).type('html').send(html);
   }
 
@@ -367,6 +367,18 @@ function pagePath(pageName: string): string {
     return distPath;
   }
   return join(process.cwd(), 'src', 'web', 'pages', pageName);
+}
+
+const PAGE_HTML_CACHE = new Map<string, string>();
+
+function pageHtml(pageName: string): string {
+  const cached = PAGE_HTML_CACHE.get(pageName);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const html = readFileSync(pagePath(pageName), 'utf8');
+  PAGE_HTML_CACHE.set(pageName, html);
+  return html;
 }
 
 function publicBaseUrl(request: Request): string {

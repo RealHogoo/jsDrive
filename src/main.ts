@@ -8,7 +8,10 @@ import { ApiExceptionFilter } from './common/api-exception.filter';
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule, { cors: false });
   app.useGlobalFilters(new ApiExceptionFilter());
-  app.use('/assets', serveStatic(join(process.cwd(), 'public')));
+  app.use('/assets', serveStatic(join(process.cwd(), 'public'), {
+    etag: true,
+    maxAge: '5m',
+  }));
   const port = Number(process.env.PORT || 8083);
   await app.listen(port);
 }

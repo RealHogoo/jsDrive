@@ -150,3 +150,6 @@ CREATE INDEX IF NOT EXISTS idx_wh_file_10
 
 CREATE INDEX IF NOT EXISTS idx_wh_file_11
     ON wh_file USING GIN (lower(tags) gin_trgm_ops);
+
+CREATE INDEX IF NOT EXISTS idx_wh_file_12
+    ON wh_file USING GIN (lower(display_name) gin_trgm_ops);

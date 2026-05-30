@@ -4,11 +4,13 @@ import { join } from 'path';
 
 @Injectable()
 export class VersionService {
+  private readonly cachedVersion = {
+    service: process.env.SERVICE_ID || 'webhard-service',
+    revision: process.env.GIT_REVISION || gitRevision() || 'unknown',
+  };
+
   version(): { service: string; revision: string } {
-    return {
-      service: process.env.SERVICE_ID || 'webhard-service',
-      revision: process.env.GIT_REVISION || gitRevision() || 'unknown',
-    };
+    return this.cachedVersion;
   }
 }
 

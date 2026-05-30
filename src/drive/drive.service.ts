@@ -311,74 +311,76 @@ export class DriveService {
 
   async dashboardSummary(_params: Record<string, unknown>, viewer: Viewer): Promise<Record<string, unknown>> {
     const includeAllUsers = isAdminViewer(viewer);
-    const totals = await this.databaseService.query(
-      `
-      SELECT COUNT(*) AS file_count,
-             COALESCE(SUM(file_size), 0) AS total_bytes,
-             COUNT(*) FILTER (WHERE deleted_yn = 'Y') AS trash_count,
-             COALESCE(SUM(file_size) FILTER (WHERE deleted_yn = 'Y'), 0) AS trash_bytes
-      FROM wh_file
-      WHERE ($2::boolean OR owner_user_id = $1)
-      `,
-      [viewer.userId, includeAllUsers],
-    );
-    const byKind = await this.databaseService.query(
-      `
-      SELECT content_kind, COUNT(*) AS file_count, COALESCE(SUM(file_size), 0) AS total_bytes
-      FROM wh_file
-      WHERE ($2::boolean OR owner_user_id = $1)
-        AND deleted_yn = 'N'
-      GROUP BY content_kind
-      ORDER BY total_bytes DESC
-      `,
-      [viewer.userId, includeAllUsers],
-    );
-    const folders = await this.databaseService.query(
-      `
-      SELECT COUNT(*) AS folder_count
-      FROM wh_folder
-      WHERE ($2::boolean OR owner_user_id = $1)
-        AND deleted_yn = 'N'
-      `,
-      [viewer.userId, includeAllUsers],
-    );
-    const duplicateGroups = await this.databaseService.query(
-      `
-      SELECT COUNT(*) AS duplicate_group_count,
-             COALESCE(SUM((file_count - 1) * file_size), 0) AS reclaimable_bytes
-      FROM (
-        SELECT content_sha256, COUNT(*) AS file_count, MIN(file_size) AS file_size
+    const [totals, byKind, folders, duplicateGroups, recent, byOwner] = await Promise.all([
+      this.databaseService.query(
+        `
+        SELECT COUNT(*) AS file_count,
+               COALESCE(SUM(file_size), 0) AS total_bytes,
+               COUNT(*) FILTER (WHERE deleted_yn = 'Y') AS trash_count,
+               COALESCE(SUM(file_size) FILTER (WHERE deleted_yn = 'Y'), 0) AS trash_bytes
+        FROM wh_file
+        WHERE ($2::boolean OR owner_user_id = $1)
+        `,
+        [viewer.userId, includeAllUsers],
+      ),
+      this.databaseService.query(
+        `
+        SELECT content_kind, COUNT(*) AS file_count, COALESCE(SUM(file_size), 0) AS total_bytes
         FROM wh_file
         WHERE ($2::boolean OR owner_user_id = $1)
           AND deleted_yn = 'N'
-          AND content_sha256 IS NOT NULL
-        GROUP BY content_sha256
-        HAVING COUNT(*) > 1
-      ) dup
-      `,
-      [viewer.userId, includeAllUsers],
-    );
-    const recent = await this.databaseService.query(
-      `
-      SELECT owner_user_id, file_id, file_name, display_name, file_size, content_kind, created_at
-      FROM wh_file
-      WHERE ($2::boolean OR owner_user_id = $1)
-        AND deleted_yn = 'N'
-      ORDER BY created_at DESC, file_id DESC
-      LIMIT 8
-      `,
-      [viewer.userId, includeAllUsers],
-    );
-    const byOwner = includeAllUsers ? await this.databaseService.query(
-      `
-      SELECT owner_user_id, COUNT(*) AS file_count, COALESCE(SUM(file_size), 0) AS total_bytes
-      FROM wh_file
-      WHERE deleted_yn = 'N'
-      GROUP BY owner_user_id
-      ORDER BY total_bytes DESC, file_count DESC
-      LIMIT 20
-      `,
-    ) : { rows: [] };
+        GROUP BY content_kind
+        ORDER BY total_bytes DESC
+        `,
+        [viewer.userId, includeAllUsers],
+      ),
+      this.databaseService.query(
+        `
+        SELECT COUNT(*) AS folder_count
+        FROM wh_folder
+        WHERE ($2::boolean OR owner_user_id = $1)
+          AND deleted_yn = 'N'
+        `,
+        [viewer.userId, includeAllUsers],
+      ),
+      this.databaseService.query(
+        `
+        SELECT COUNT(*) AS duplicate_group_count,
+               COALESCE(SUM((file_count - 1) * file_size), 0) AS reclaimable_bytes
+        FROM (
+          SELECT content_sha256, COUNT(*) AS file_count, MIN(file_size) AS file_size
+          FROM wh_file
+          WHERE ($2::boolean OR owner_user_id = $1)
+            AND deleted_yn = 'N'
+            AND content_sha256 IS NOT NULL
+          GROUP BY content_sha256
+          HAVING COUNT(*) > 1
+        ) dup
+        `,
+        [viewer.userId, includeAllUsers],
+      ),
+      this.databaseService.query(
+        `
+        SELECT owner_user_id, file_id, file_name, display_name, file_size, content_kind, created_at
+        FROM wh_file
+        WHERE ($2::boolean OR owner_user_id = $1)
+          AND deleted_yn = 'N'
+        ORDER BY created_at DESC, file_id DESC
+        LIMIT 8
+        `,
+        [viewer.userId, includeAllUsers],
+      ),
+      includeAllUsers ? this.databaseService.query(
+        `
+        SELECT owner_user_id, COUNT(*) AS file_count, COALESCE(SUM(file_size), 0) AS total_bytes
+        FROM wh_file
+        WHERE deleted_yn = 'N'
+        GROUP BY owner_user_id
+        ORDER BY total_bytes DESC, file_count DESC
+        LIMIT 20
+        `,
+      ) : Promise.resolve({ rows: [] }),
+    ]);
     return {
       scope: includeAllUsers ? 'ALL_USERS' : 'CURRENT_USER',
       totals: totals.rows[0] || {},
