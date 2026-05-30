@@ -33,7 +33,6 @@ export class HealthController {
       status: db === 'UP' ? 'UP' : 'DOWN',
       service: serviceId(),
       db,
-      env: process.env.APP_ENV || 'dev',
     });
   }
 }
