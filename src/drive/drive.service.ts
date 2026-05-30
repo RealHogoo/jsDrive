@@ -43,6 +43,7 @@ export class DriveService {
     const folderId = optionalNumber(params.folder_id, 'folder_id');
     const parentFolderId = optionalNumber(params.parent_folder_id, 'parent_folder_id');
     const folderName = requiredText(params.folder_name, 'folder_name is required');
+    await this.ensureOwnedFolder(parentFolderId, viewer);
 
     if (folderId == null) {
       const result = await this.databaseService.query<{ folder_id: number }>(
@@ -130,7 +131,7 @@ export class DriveService {
     const result = await this.databaseService.query(
       `
       SELECT file_id, folder_id, file_name, display_name, file_size, content_type, content_kind,
-             storage_path, public_path, thumbnail_path, original_created_at, created_at, updated_at
+             public_path, thumbnail_path, original_created_at, created_at, updated_at
       FROM wh_file
       WHERE owner_user_id = $1
         AND (($2::bigint IS NULL AND folder_id IS NULL) OR folder_id = $2::bigint)
@@ -610,6 +611,7 @@ export class DriveService {
   async registerFile(params: Record<string, unknown>, viewer: Viewer): Promise<Record<string, unknown>> {
     await this.indexingService.ensureNotRunning(viewer);
     const folderId = optionalNumber(params.folder_id, 'folder_id');
+    await this.ensureOwnedFolder(folderId, viewer);
     const fileName = requiredText(params.file_name, 'file_name is required');
     const storagePath = validateOwnedStoragePath(requiredText(params.storage_path, 'storage_path is required'), viewer.userId);
     const fileSize = optionalNumber(params.file_size, 'file_size') || 0;
@@ -644,6 +646,7 @@ export class DriveService {
     }
     validateUploadSizes([file]);
     const folderId = optionalNumber(params.folder_id, 'folder_id');
+    await this.ensureOwnedFolder(folderId, viewer);
     const originalCreatedAt = optionalTimestamp(params.original_created_at, 'original_created_at') || new Date().toISOString();
     const contentType = file.mimetype || 'application/octet-stream';
     const fileName = normalizeFileName(file.originalname);
@@ -705,6 +708,7 @@ export class DriveService {
     }
     validateUploadSizes(uploadFiles);
     const folderId = optionalNumber(params.folder_id, 'folder_id');
+    await this.ensureOwnedFolder(folderId, viewer);
     const originalCreatedAtList = arrayParam(params.original_created_at);
 
     const items = [];
@@ -927,9 +931,10 @@ export class DriveService {
   async createShare(params: Record<string, unknown>, viewer: Viewer): Promise<Record<string, unknown>> {
     const fileId = optionalNumber(params.file_id, 'file_id');
     const folderId = optionalNumber(params.folder_id, 'folder_id');
-    if (fileId == null && folderId == null) {
+    if ((fileId == null && folderId == null) || (fileId != null && folderId != null)) {
       throw ApiException.badRequest('file_id or folder_id is required');
     }
+    await this.ensureShareTarget(fileId, folderId, viewer);
     const expiresAt = optionalText(params.expires_at);
     const password = optionalText(params.password);
     const passwordHash = password ? hashPassword(password) : null;
@@ -969,6 +974,55 @@ export class DriveService {
       [ownerUserId, contentSha256],
     );
     return { count: result.rowCount || 0, items: result.rows };
+  }
+
+  private async ensureOwnedFolder(folderId: number | null, viewer: Viewer): Promise<void> {
+    if (folderId == null) {
+      return;
+    }
+    const result = await this.databaseService.query(
+      `
+      SELECT 1
+      FROM wh_folder
+      WHERE folder_id = $1
+        AND owner_user_id = $2
+        AND deleted_yn = 'N'
+      LIMIT 1
+      `,
+      [folderId, viewer.userId],
+    );
+    if (result.rowCount === 0) {
+      throw ApiException.badRequest('folder not found');
+    }
+  }
+
+  private async ensureShareTarget(fileId: number | null, folderId: number | null, viewer: Viewer): Promise<void> {
+    const result = fileId != null
+      ? await this.databaseService.query(
+        `
+        SELECT 1
+        FROM wh_file
+        WHERE file_id = $1
+          AND owner_user_id = $2
+          AND deleted_yn = 'N'
+        LIMIT 1
+        `,
+        [fileId, viewer.userId],
+      )
+      : await this.databaseService.query(
+        `
+        SELECT 1
+        FROM wh_folder
+        WHERE folder_id = $1
+          AND owner_user_id = $2
+          AND deleted_yn = 'N'
+        LIMIT 1
+        `,
+        [folderId, viewer.userId],
+      );
+    if (result.rowCount === 0) {
+      throw ApiException.badRequest('share target not found');
+    }
   }
 }
 

@@ -61,6 +61,39 @@ describe('DriveService management features', () => {
     expect(query).toHaveBeenCalledWith(expect.stringContaining('EXISTS'), [3, 'ADMIN', 9]);
   });
 
+  it('does not expose server storage paths in file list responses', async () => {
+    const query = jest.fn<MockQuery>()
+      .mockResolvedValueOnce({ rows: [{ file_id: 1, file_name: 'a.txt' }], rowCount: 1 });
+    const service = serviceWith(query, indexingService);
+
+    await expect(service.fileList({}, { userId: 'ADMIN', roles: [] })).resolves.toEqual({
+      items: [{ file_id: 1, file_name: 'a.txt' }],
+    });
+    expect(query.mock.calls[0][0]).not.toContain('storage_path');
+  });
+
+  it('requires share targets to belong to the viewer', async () => {
+    const query = jest.fn<MockQuery>()
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    const service = serviceWith(query, indexingService);
+
+    await expect(service.createShare({ file_id: 9 }, { userId: 'ADMIN', roles: [] })).rejects.toThrow('share target not found');
+    expect(query).toHaveBeenCalledWith(expect.stringContaining('FROM wh_file'), [9, 'ADMIN']);
+  });
+
+  it('requires upload target folders to belong to the viewer', async () => {
+    const query = jest.fn<MockQuery>()
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    const service = serviceWith(query, indexingService);
+
+    await expect(service.registerFile({
+      folder_id: 99,
+      file_name: 'a.txt',
+      storage_path: join(tempDir, 'ADMIN', 'a.txt'),
+    }, { userId: 'ADMIN', roles: [] })).rejects.toThrow('folder not found');
+    expect(query).toHaveBeenCalledWith(expect.stringContaining('FROM wh_folder'), [99, 'ADMIN']);
+  });
+
   it('uses all-user dashboard scope for admins and current-user scope otherwise', async () => {
     const adminQuery = dashboardQuery();
     const adminService = serviceWith(adminQuery, indexingService);
