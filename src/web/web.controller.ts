@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Req, Res } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Req, Res } from '@nestjs/common';
 import { scryptSync, timingSafeEqual } from 'crypto';
 import { Request, Response } from 'express';
 import { existsSync, readFileSync } from 'fs';
@@ -102,8 +102,35 @@ export class WebController {
 
   @Public()
   @Get('share/download/:token')
-  async shareDownload(@Param('token') token: string, @Req() request: Request, @Res() response: Response): Promise<void> {
-    const share = await this.findShare(token, String(request.query.password || ''));
+  async shareDownload(@Param('token') token: string, @Res() response: Response): Promise<void> {
+    const share = await this.findShare(token, '', { allowMissingPassword: true });
+    if (share?.password_hash) {
+      this.renderError(response, 403, '비밀번호가 필요한 공유 링크입니다.');
+      return;
+    }
+    await this.sendSharedFile(share, response);
+  }
+
+  @Public()
+  @Post('share/download/:token')
+  async shareDownloadWithPassword(
+    @Param('token') token: string,
+    @Body() body: Record<string, unknown> = {},
+    @Res() response: Response,
+  ): Promise<void> {
+    const share = await this.findShare(token, String(body.password || ''));
+    await this.sendSharedFile(share, response);
+  }
+
+  private async sendSharedFile(
+    share: {
+      share_id: number;
+      storage_path: string | null;
+      display_name: string | null;
+      file_name: string | null;
+    } | null,
+    response: Response,
+  ): Promise<void> {
     if (!share || !share.storage_path || !existsSync(share.storage_path)) {
       this.renderError(response, 404, '공유 파일을 찾을 수 없습니다.');
       return;
@@ -277,7 +304,7 @@ export class WebController {
     return result.rows[0] || null;
   }
 
-  private async findShare(token: string, password: string) {
+  private async findShare(token: string, password: string, options: { allowMissingPassword?: boolean } = {}) {
     if (!/^[a-f0-9]{48}$/i.test(token || '')) {
       return null;
     }
@@ -312,7 +339,13 @@ export class WebController {
       [token],
     );
     const share = result.rows[0];
-    if (!share || !verifySharePassword(password, share.password_hash)) {
+    if (!share) {
+      return null;
+    }
+    if (options.allowMissingPassword && share.password_hash && !password) {
+      return share;
+    }
+    if (!verifySharePassword(password, share.password_hash)) {
       return null;
     }
     return share;
