@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Param, Post, Req, Res } from '@nestjs/common';
 import { scryptSync, timingSafeEqual } from 'crypto';
+import { once } from 'events';
 import { Request, Response } from 'express';
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
@@ -10,6 +11,8 @@ import { DatabaseService } from '../database/database.service';
 import { AdminServiceClient } from '../integration/admin/admin-service.client';
 import { VersionService } from '../version/version.service';
 import { DownloadJobService } from './download-job.service';
+
+const archiver = require('archiver') as (format: string, options: { zlib: { level: number } }) => any;
 
 @Controller()
 export class WebController {
@@ -108,7 +111,7 @@ export class WebController {
       this.renderError(response, 403, '비밀번호가 필요한 공유 링크입니다.');
       return;
     }
-    await this.sendSharedFile(share, response);
+    await this.sendSharedItem(share, response);
   }
 
   @Public()
@@ -119,6 +122,25 @@ export class WebController {
     @Res() response: Response,
   ): Promise<void> {
     const share = await this.findShare(token, String(body.password || ''));
+    await this.sendSharedItem(share, response);
+  }
+
+  private async sendSharedItem(
+    share: {
+      share_id: number;
+      file_id: number | null;
+      folder_id: number | null;
+      folder_name: string | null;
+      storage_path: string | null;
+      display_name: string | null;
+      file_name: string | null;
+    } | null,
+    response: Response,
+  ): Promise<void> {
+    if (share?.folder_id) {
+      await this.sendSharedFolder(share, response);
+      return;
+    }
     await this.sendSharedFile(share, response);
   }
 
@@ -147,12 +169,94 @@ export class WebController {
     response.download(share.storage_path, share.display_name || share.file_name || 'download');
   }
 
+  private async sendSharedFolder(
+    share: {
+      share_id: number;
+      folder_id: number | null;
+      folder_name: string | null;
+    },
+    response: Response,
+  ): Promise<void> {
+    const files = await this.sharedFolderFiles(share.folder_id);
+    const existingFiles = files.filter((file) => file.storage_path && existsSync(file.storage_path));
+    if (existingFiles.length === 0) {
+      this.renderError(response, 404, '공유 폴더에 다운로드할 파일이 없습니다.');
+      return;
+    }
+    await this.incrementShareDownloadCount(share.share_id);
+    const archive = archiver('zip', { zlib: { level: 6 } });
+    const failed = Promise.race([
+      once(response, 'error').then(([error]) => Promise.reject(error)),
+      once(archive, 'error').then(([error]) => Promise.reject(error)),
+    ]);
+    const finished = once(response, 'finish');
+    response.attachment(`${safeDownloadName(share.folder_name || 'folder')}.zip`);
+    archive.pipe(response);
+    existingFiles.forEach((file, index) => {
+      archive.file(file.storage_path, { name: sharedZipEntryName(file, index) });
+    });
+    await archive.finalize();
+    await Promise.race([finished, failed]);
+  }
+
+  private async incrementShareDownloadCount(shareId: number): Promise<void> {
+    await this.databaseService.query(
+      `
+      UPDATE wh_share
+      SET download_count = download_count + 1,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE share_id = $1
+      `,
+      [shareId],
+    );
+  }
+
+  private async sharedFolderFiles(folderId: number | null): Promise<Array<{
+    file_id: number;
+    file_name: string | null;
+    display_name: string | null;
+    storage_path: string;
+    folder_path: string;
+  }>> {
+    if (!folderId) {
+      return [];
+    }
+    const result = await this.databaseService.query<{
+      file_id: number;
+      file_name: string | null;
+      display_name: string | null;
+      storage_path: string;
+      folder_path: string;
+    }>(
+      `
+      WITH RECURSIVE folders AS (
+        SELECT folder_id, parent_folder_id, folder_name, folder_name::text AS folder_path
+        FROM wh_folder
+        WHERE folder_id = $1
+          AND deleted_yn = 'N'
+        UNION ALL
+        SELECT child.folder_id, child.parent_folder_id, child.folder_name,
+               folders.folder_path || '/' || child.folder_name
+        FROM wh_folder child
+        JOIN folders ON child.parent_folder_id = folders.folder_id
+        WHERE child.deleted_yn = 'N'
+      )
+      SELECT f.file_id, f.file_name, f.display_name, f.storage_path, folders.folder_path
+      FROM folders
+      JOIN wh_file f ON f.folder_id = folders.folder_id
+      WHERE f.deleted_yn = 'N'
+      ORDER BY folders.folder_path ASC, f.file_name ASC, f.file_id ASC
+      `,
+      [folderId],
+    );
+    return result.rows;
+  }
+
   @Public()
   @Get('file/content/:fileId')
   async fileContent(@Param('fileId') fileId: string, @Req() request: Request, @Res() response: Response): Promise<void> {
-    const currentUser = await this.currentUser(request);
+    const currentUser = await this.currentWebhardUser(request, response);
     if (!currentUser) {
-      this.renderError(response, 401);
       return;
     }
     const file = await this.findOwnedFile(fileId, currentUser.user_id);
@@ -174,9 +278,8 @@ export class WebController {
   @Public()
   @Get('file/thumbnail/:fileId')
   async fileThumbnail(@Param('fileId') fileId: string, @Req() request: Request, @Res() response: Response): Promise<void> {
-    const currentUser = await this.currentUser(request);
+    const currentUser = await this.currentWebhardUser(request, response);
     if (!currentUser) {
-      this.renderError(response, 401);
       return;
     }
     const file = await this.findOwnedFile(fileId, currentUser.user_id);
@@ -191,9 +294,8 @@ export class WebController {
   @Public()
   @Get('file/download/:fileId')
   async fileDownload(@Param('fileId') fileId: string, @Req() request: Request, @Res() response: Response): Promise<void> {
-    const currentUser = await this.currentUser(request);
+    const currentUser = await this.currentWebhardUser(request, response);
     if (!currentUser) {
-      this.renderError(response, 401);
       return;
     }
     const file = await this.findOwnedFile(fileId, currentUser.user_id);
@@ -207,9 +309,8 @@ export class WebController {
   @Public()
   @Get(['file/week-download', 'file/week-download.zip'])
   async weekDownload(@Req() request: Request, @Res() response: Response): Promise<void> {
-    const currentUser = await this.currentUser(request);
+    const currentUser = await this.currentWebhardUser(request, response);
     if (!currentUser) {
-      this.renderError(response, 401);
       return;
     }
     const weekStart = String(request.query.week_start || '');
@@ -228,9 +329,8 @@ export class WebController {
   @Public()
   @Get('download/file/:jobId')
   async downloadFile(@Param('jobId') jobId: string, @Req() request: Request, @Res() response: Response): Promise<void> {
-    const currentUser = await this.currentUser(request);
+    const currentUser = await this.currentWebhardUser(request, response);
     if (!currentUser) {
-      this.renderError(response, 401);
       return;
     }
     const job = await this.downloadJobService.completedJob(jobId, currentUser.user_id);
@@ -274,6 +374,19 @@ export class WebController {
     return this.adminServiceClient.fetchCurrentUser(token);
   }
 
+  private async currentWebhardUser(request: Request, response: Response) {
+    const currentUser = await this.currentUser(request);
+    if (!currentUser) {
+      this.renderError(response, 401);
+      return null;
+    }
+    if (!isAdmin(currentUser.roles) && !hasAnyWebhardPermission(currentUser.service_permissions)) {
+      this.renderError(response, 403);
+      return null;
+    }
+    return currentUser;
+  }
+
   private renderError(response: Response, status: number, message?: string): void {
     const bootstrap = `<script>window.WEBHARD_ERROR_CODE=${JSON.stringify(String(status))};`
       + `window.WEBHARD_ERROR_MESSAGE=${JSON.stringify(message || '')};</script>`;
@@ -312,6 +425,7 @@ export class WebController {
       share_id: number;
       file_id: number | null;
       folder_id: number | null;
+      folder_name: string | null;
       password_hash: string | null;
       max_download_count: number | null;
       download_count: number;
@@ -328,9 +442,11 @@ export class WebController {
       SELECT s.share_id, s.file_id, s.folder_id, s.password_hash, s.max_download_count,
              s.download_count, s.expires_at,
              f.file_name, f.display_name, f.storage_path, f.content_type, f.content_kind,
-             f.file_size, f.thumbnail_path
+             f.file_size, f.thumbnail_path,
+             folder.folder_name
       FROM wh_share s
       LEFT JOIN wh_file f ON f.file_id = s.file_id AND f.deleted_yn = 'N'
+      LEFT JOIN wh_folder folder ON folder.folder_id = s.folder_id AND folder.deleted_yn = 'N'
       WHERE s.share_token = $1
         AND s.revoked_yn = 'N'
         AND (s.expires_at IS NULL OR s.expires_at > CURRENT_TIMESTAMP)
@@ -442,6 +558,30 @@ function escapeHtml(value: string): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+function safeDownloadName(value: string): string {
+  return String(value || 'download').replace(/[\\/:*?"<>|]/g, '_').trim() || 'download';
+}
+
+function sharedZipEntryName(
+  file: { file_id: number; file_name: string | null; display_name: string | null; folder_path: string },
+  index: number,
+): string {
+  const folders = String(file.folder_path || '')
+    .split('/')
+    .map(safeZipSegment)
+    .filter(Boolean);
+  const fileName = safeZipSegment(file.display_name || file.file_name || `file-${file.file_id}`);
+  return [...folders, `${String(index + 1).padStart(3, '0')}-${fileName}`].join('/');
+}
+
+function safeZipSegment(value: string): string {
+  return String(value || '')
+    .replace(/[\\/:*?"<>|]/g, '_')
+    .replace(/^\.+$/, '_')
+    .trim()
+    .slice(0, 180) || 'item';
 }
 
 function verifySharePassword(password: string, storedHash: string | null): boolean {

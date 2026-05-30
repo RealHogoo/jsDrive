@@ -11,7 +11,7 @@ import { authTokenWithSource, isCrossSiteRequest } from '../common/request-util'
 import { AdminServiceClient } from '../integration/admin/admin-service.client';
 import { IS_PUBLIC_KEY } from './public.decorator';
 import { REQUIRED_PERMISSION_KEY } from './require-permission.decorator';
-import { hasPermission, isAdmin } from './permission.util';
+import { hasAnyWebhardPermission, hasPermission, isAdmin } from './permission.util';
 
 @Injectable()
 export class AuthGuard implements CanActivate {
@@ -52,6 +52,9 @@ export class AuthGuard implements CanActivate {
       context.getHandler(),
       context.getClass(),
     ]);
+    if (!isAdmin(currentUser.roles) && !hasAnyWebhardPermission(currentUser.service_permissions)) {
+      throw new ForbiddenException('웹하드 접근 권한이 없습니다. 관리자에게 접근 권한 설정을 요청하세요.');
+    }
     if (requiredPermission && !isAdmin(currentUser.roles) && !hasPermission(currentUser.service_permissions, requiredPermission)) {
       throw new ForbiddenException('권한이 없습니다. 관리자에게 웹하드 접근 권한 설정을 요청하세요.');
     }
