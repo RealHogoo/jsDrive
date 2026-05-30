@@ -1,4 +1,5 @@
 import { Controller, Get, Param, Req, Res } from '@nestjs/common';
+import { scryptSync, timingSafeEqual } from 'crypto';
 import { Request, Response } from 'express';
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
@@ -89,6 +90,34 @@ export class WebController {
   @Get('error.html')
   async error(@Res() response: Response): Promise<void> {
     response.sendFile(pagePath('error.html'));
+  }
+
+  @Public()
+  @Get('s/:token')
+  async sharePage(@Param('token') token: string, @Res() response: Response): Promise<void> {
+    const bootstrap = `<script>window.WEBHARD_SHARE_TOKEN=${JSON.stringify(token || '')};</script>`;
+    const html = readFileSync(pagePath('share.html'), 'utf8').replace('</head>', `${bootstrap}</head>`);
+    response.type('html').send(html);
+  }
+
+  @Public()
+  @Get('share/download/:token')
+  async shareDownload(@Param('token') token: string, @Req() request: Request, @Res() response: Response): Promise<void> {
+    const share = await this.findShare(token, String(request.query.password || ''));
+    if (!share || !share.storage_path || !existsSync(share.storage_path)) {
+      this.renderError(response, 404, '공유 파일을 찾을 수 없습니다.');
+      return;
+    }
+    await this.databaseService.query(
+      `
+      UPDATE wh_share
+      SET download_count = download_count + 1,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE share_id = $1
+      `,
+      [share.share_id],
+    );
+    response.download(share.storage_path, share.display_name || share.file_name || 'download');
   }
 
   @Public()
@@ -248,6 +277,47 @@ export class WebController {
     return result.rows[0] || null;
   }
 
+  private async findShare(token: string, password: string) {
+    if (!/^[a-f0-9]{48}$/i.test(token || '')) {
+      return null;
+    }
+    const result = await this.databaseService.query<{
+      share_id: number;
+      file_id: number | null;
+      folder_id: number | null;
+      password_hash: string | null;
+      max_download_count: number | null;
+      download_count: number;
+      file_name: string | null;
+      display_name: string | null;
+      storage_path: string | null;
+      content_type: string | null;
+      content_kind: string | null;
+      file_size: string | null;
+      thumbnail_path: string | null;
+      expires_at: string | null;
+    }>(
+      `
+      SELECT s.share_id, s.file_id, s.folder_id, s.password_hash, s.max_download_count,
+             s.download_count, s.expires_at,
+             f.file_name, f.display_name, f.storage_path, f.content_type, f.content_kind,
+             f.file_size, f.thumbnail_path
+      FROM wh_share s
+      LEFT JOIN wh_file f ON f.file_id = s.file_id AND f.deleted_yn = 'N'
+      WHERE s.share_token = $1
+        AND s.revoked_yn = 'N'
+        AND (s.expires_at IS NULL OR s.expires_at > CURRENT_TIMESTAMP)
+        AND (s.max_download_count IS NULL OR s.download_count < s.max_download_count)
+      `,
+      [token],
+    );
+    const share = result.rows[0];
+    if (!share || !verifySharePassword(password, share.password_hash)) {
+      return null;
+    }
+    return share;
+  }
+
   private loginUrl(request: Request): string {
     const adminBaseUrl = trimTrailingSlash(
       process.env.ADMIN_SERVICE_PUBLIC_BASE_URL || process.env.ADMIN_SERVICE_BASE_URL || 'http://localhost:8081',
@@ -327,4 +397,17 @@ function escapeHtml(value: string): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+function verifySharePassword(password: string, storedHash: string | null): boolean {
+  if (!storedHash) {
+    return true;
+  }
+  const parts = storedHash.split(':');
+  if (parts.length !== 3 || parts[0] !== 'scrypt') {
+    return false;
+  }
+  const expected = Buffer.from(parts[2], 'hex');
+  const actual = scryptSync(password || '', parts[1], expected.length);
+  return expected.length === actual.length && timingSafeEqual(expected, actual);
 }

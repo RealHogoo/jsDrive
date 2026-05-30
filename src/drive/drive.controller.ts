@@ -66,6 +66,12 @@ export class DriveController {
     return ok(await this.driveService.duplicates(body, viewer(request)), traceId(request));
   }
 
+  @RequirePermission('WRITE')
+  @Post('file/hash-backfill.json')
+  async hashBackfill(@Body() body: Record<string, unknown> = {}, @Req() request: Request) {
+    return ok(await this.driveService.backfillHashes(body, viewer(request)), traceId(request));
+  }
+
   @Post('dashboard/summary.json')
   async dashboardSummary(@Body() body: Record<string, unknown> = {}, @Req() request: Request) {
     return ok(await this.driveService.dashboardSummary(body, viewer(request)), traceId(request));

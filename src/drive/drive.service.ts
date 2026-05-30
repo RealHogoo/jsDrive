@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { createHash, randomBytes, randomUUID, scryptSync } from 'crypto';
-import { mkdir, unlink, writeFile } from 'fs/promises';
+import { mkdir, readFile, unlink, writeFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import { extname, isAbsolute, join, relative, resolve, sep } from 'path';
 import sharp from 'sharp';
@@ -260,6 +260,53 @@ export class DriveService {
       [viewer.userId, minCount],
     );
     return { items: result.rows };
+  }
+
+  async backfillHashes(params: Record<string, unknown>, viewer: Viewer): Promise<Record<string, unknown>> {
+    const limit = Math.min(Math.max(optionalNumber(params.limit, 'limit') || 50, 1), 200);
+    const includeAllUsers = isAdminViewer(viewer) && optionalBoolean(params.all_users);
+    const result = await this.databaseService.query<{
+      file_id: number;
+      owner_user_id: string;
+      storage_path: string;
+    }>(
+      `
+      SELECT file_id, owner_user_id, storage_path
+      FROM wh_file
+      WHERE ($2::boolean OR owner_user_id = $1)
+        AND deleted_yn = 'N'
+        AND content_sha256 IS NULL
+      ORDER BY file_id ASC
+      LIMIT $3
+      `,
+      [viewer.userId, includeAllUsers, limit],
+    );
+    let updated = 0;
+    let skipped = 0;
+    for (const file of result.rows) {
+      if (!file.storage_path || !existsSync(file.storage_path)) {
+        skipped++;
+        continue;
+      }
+      const hash = createHash('sha256').update(await readFile(file.storage_path)).digest('hex');
+      await this.databaseService.query(
+        `
+        UPDATE wh_file
+        SET content_sha256 = $2,
+            updated_at = CURRENT_TIMESTAMP,
+            updated_by = $3
+        WHERE file_id = $1
+        `,
+        [file.file_id, hash, viewer.userId],
+      );
+      updated++;
+    }
+    return {
+      scanned_count: result.rowCount || 0,
+      updated_count: updated,
+      skipped_count: skipped,
+      has_more: (result.rowCount || 0) === limit,
+    };
   }
 
   async dashboardSummary(_params: Record<string, unknown>, viewer: Viewer): Promise<Record<string, unknown>> {
@@ -998,6 +1045,11 @@ function optionalNumber(value: unknown, fieldName: string): number | null {
     throw ApiException.badRequest(`${fieldName} must be numeric`);
   }
   return parsed;
+}
+
+function optionalBoolean(value: unknown): boolean {
+  const text = optionalText(value);
+  return text === 'true' || text === 'Y' || text === '1';
 }
 
 function requiredNumber(value: unknown, message: string): number {
