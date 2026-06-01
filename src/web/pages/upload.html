@@ -16,16 +16,20 @@
       <a href="/search.html">검색</a>
       <a href="/download-jobs.html">다운로드</a>
       <a href="/trash.html">휴지통</a>
+      <a href="/shares.html" data-permission="share">공유</a>
+      <a href="/audit.html">기록</a>
       <a href="/indexing.html">인덱싱</a>
     </nav>
   </header>
   <main class="shell">
     <section class="panel">
       <h1>파일 업로드</h1>
-      <form id="uploadForm" class="form-grid">
+      <form id="uploadForm" class="form-grid" data-permission="write">
         <label>
           폴더 ID
-          <input id="folderId" class="input" type="number" min="1" placeholder="선택">
+          <select id="folderId" class="input">
+            <option value="">루트</option>
+          </select>
         </label>
         <div id="uploadLimitText" class="upload-limit-text">
           단일 파일 100MB 이하, 전체 500MB 이하

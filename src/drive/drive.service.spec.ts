@@ -81,6 +81,51 @@ describe('DriveService management features', () => {
     expect(query).toHaveBeenCalledWith(expect.stringContaining('FROM wh_file'), [9, 'ADMIN']);
   });
 
+  it('returns owned folder tree paths for folder selectors', async () => {
+    const query = jest.fn<MockQuery>()
+      .mockResolvedValueOnce({
+        rows: [{ folder_id: 1, folder_name: 'docs', folder_path: 'docs', depth: 1 }],
+        rowCount: 1,
+      });
+    const service = serviceWith(query, indexingService);
+
+    await expect(service.folderTree({ userId: 'ADMIN', roles: [] })).resolves.toEqual({
+      items: [{ folder_id: 1, folder_name: 'docs', folder_path: 'docs', depth: 1 }],
+    });
+    expect(query).toHaveBeenCalledWith(expect.stringContaining('WITH RECURSIVE folders'), ['ADMIN']);
+  });
+
+  it('lists and revokes shares owned by the viewer', async () => {
+    const listQuery = jest.fn<MockQuery>()
+      .mockResolvedValueOnce({ rows: [{ share_id: 1, share_token: 'token' }], rowCount: 1 });
+    const listService = serviceWith(listQuery, indexingService);
+
+    await expect(listService.shareList({ limit: 20 }, { userId: 'ADMIN', roles: [] })).resolves.toMatchObject({
+      items: [{ share_id: 1, share_token: 'token' }],
+      has_more: false,
+    });
+    expect(listQuery).toHaveBeenCalledWith(expect.stringContaining('FROM wh_share s'), ['ADMIN', 21, 0]);
+
+    const revokeQuery = jest.fn<MockQuery>()
+      .mockResolvedValueOnce({ rows: [{ share_id: 1 }], rowCount: 1 });
+    const revokeService = serviceWith(revokeQuery, indexingService);
+    await expect(revokeService.revokeShare({ share_id: 1 }, { userId: 'ADMIN', roles: [] })).resolves.toEqual({
+      share_id: 1,
+    });
+    expect(revokeQuery).toHaveBeenCalledWith(expect.stringContaining('UPDATE wh_share'), [1, 'ADMIN']);
+  });
+
+  it('allows admins to request all audit log rows', async () => {
+    const query = jest.fn<MockQuery>()
+      .mockResolvedValueOnce({ rows: [{ log_id: 1, actor_user_id: 'USER1' }], rowCount: 1 });
+    const service = serviceWith(query, indexingService);
+
+    await expect(service.auditList({ all_users: true }, { userId: 'ADMIN', roles: ['ROLE_ADMIN'] })).resolves.toMatchObject({
+      items: [{ log_id: 1, actor_user_id: 'USER1' }],
+    });
+    expect(query).toHaveBeenCalledWith(expect.stringContaining('FROM wh_audit_log'), ['ADMIN', true, 21, 0]);
+  });
+
   it('requires upload target folders to belong to the viewer', async () => {
     const query = jest.fn<MockQuery>()
       .mockResolvedValueOnce({ rows: [], rowCount: 0 });

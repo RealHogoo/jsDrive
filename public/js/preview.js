@@ -63,6 +63,7 @@
     weeks.forEach(function (week) {
       feed.insertAdjacentHTML("beforeend", weekSection(week));
     });
+    Webhard.applyPermissions(feed);
     loadedWeeks += weeks.length;
     var cardCount = feed.querySelectorAll(".preview-card").length;
     summary.textContent = loadedWeeks > 0

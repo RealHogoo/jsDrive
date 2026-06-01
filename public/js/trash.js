@@ -30,6 +30,7 @@
       var items = data.items || [];
       if (items.length > 0) {
         grid.insertAdjacentHTML("beforeend", items.map(trashCard).join(""));
+        Webhard.applyPermissions(grid);
       }
       offset = data.next_offset || offset + items.length;
       hasMore = data.has_more === true;

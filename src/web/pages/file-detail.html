@@ -17,6 +17,8 @@
       <a href="/search.html">검색</a>
       <a href="/download-jobs.html">다운로드</a>
       <a href="/trash.html">휴지통</a>
+      <a href="/shares.html" data-permission="share">공유</a>
+      <a href="/audit.html">기록</a>
       <a href="/indexing.html">인덱싱</a>
     </nav>
   </header>
@@ -47,7 +49,7 @@
         </div>
       </dl>
       <div class="management-grid">
-        <form id="metadataForm" class="panel">
+        <form id="metadataForm" class="panel" data-permission="write">
           <h2>표시 정보</h2>
           <label>파일명<input id="editFileName" class="input" type="text"></label>
           <label>표시명<input id="displayName" class="input" type="text"></label>
@@ -55,12 +57,14 @@
           <label>태그<input id="fileTags" class="input" type="text" placeholder="쉼표로 구분"></label>
           <button class="btn primary" type="submit">저장</button>
         </form>
-        <form id="moveForm" class="panel">
+        <form id="moveForm" class="panel" data-permission="write">
           <h2>위치 이동</h2>
-          <label>대상 폴더 ID<input id="targetFolderId" class="input" type="number" min="1" placeholder="비우면 루트"></label>
+          <label>대상 폴더 ID<select id="targetFolderId" class="input">
+              <option value="">루트</option>
+            </select></label>
           <button class="btn" type="submit">이동</button>
         </form>
-        <form id="shareForm" class="panel">
+        <form id="shareForm" class="panel" data-permission="share">
           <h2>공유 링크</h2>
           <label>만료일시<input id="shareExpiresAt" class="input" type="datetime-local"></label>
           <label>비밀번호<input id="sharePassword" class="input" type="password"></label>

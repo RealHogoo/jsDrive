@@ -90,6 +90,18 @@ export class WebController {
   }
 
   @Public()
+  @Get('shares.html')
+  async shares(@Req() request: Request, @Res() response: Response): Promise<void> {
+    await this.renderProtectedPage(request, response, 'shares.html');
+  }
+
+  @Public()
+  @Get('audit.html')
+  async audit(@Req() request: Request, @Res() response: Response): Promise<void> {
+    await this.renderProtectedPage(request, response, 'audit.html');
+  }
+
+  @Public()
   @Get('error.html')
   async error(@Res() response: Response): Promise<void> {
     response.sendFile(pagePath('error.html'));
@@ -350,7 +362,7 @@ export class WebController {
   private async renderProtectedPage(
     request: Request,
     response: Response,
-    pageName: 'index.html' | 'upload.html' | 'dashboard.html' | 'preview.html' | 'preview-detail.html' | 'file-detail.html' | 'trash.html' | 'search.html' | 'download-jobs.html' | 'indexing.html',
+    pageName: 'index.html' | 'upload.html' | 'dashboard.html' | 'preview.html' | 'preview-detail.html' | 'file-detail.html' | 'trash.html' | 'search.html' | 'download-jobs.html' | 'indexing.html' | 'shares.html' | 'audit.html',
   ): Promise<void> {
     const currentUser = await this.currentUser(request);
     if (!currentUser) {

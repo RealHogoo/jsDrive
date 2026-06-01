@@ -635,6 +635,38 @@ label {
   background: #fff;
 }
 
+.management-list {
+  display: grid;
+  gap: 10px;
+}
+
+.management-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(90px, auto) minmax(120px, auto) minmax(120px, auto) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid #dbe2ef;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.management-row strong,
+.management-row span {
+  overflow-wrap: anywhere;
+}
+
+.management-row span {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.wide-button {
+  width: 100%;
+  justify-content: center;
+  margin-top: 12px;
+}
+
 @media (max-width: 720px) {
   .shell {
     width: 100%;
@@ -676,6 +708,10 @@ label {
   }
 
   .job-row {
+    grid-template-columns: 1fr;
+  }
+
+  .management-row {
     grid-template-columns: 1fr;
   }
 }

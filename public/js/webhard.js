@@ -5,6 +5,62 @@
     return {};
   }
 
+  var currentUserPromise = null;
+  var currentUserCache = null;
+
+  function currentUser() {
+    if (!currentUserPromise) {
+      currentUserPromise = postJson("/me.json", {}).then(function (user) {
+        currentUserCache = user || {};
+        return currentUserCache;
+      }).catch(function () {
+        currentUserCache = { permissions: {} };
+        return currentUserCache;
+      });
+    }
+    return currentUserPromise;
+  }
+
+  function can(permission) {
+    var permissions = currentUserCache && currentUserCache.permissions;
+    if (!permission) {
+      return true;
+    }
+    return !!(permissions && permissions[String(permission).toLowerCase()] === true);
+  }
+
+  function applyPermissions(root) {
+    return currentUser().then(function () {
+      filterByPermission(root || document);
+      return currentUserCache;
+    });
+  }
+
+  function filterByPermission(root) {
+    Array.prototype.forEach.call((root || document).querySelectorAll("[data-permission]"), function (element) {
+      element.hidden = !can(element.getAttribute("data-permission"));
+    });
+  }
+
+  function populateFolderSelect(selectId, selectedValue) {
+    var select = typeof selectId === "string" ? document.getElementById(selectId) : selectId;
+    if (!select) {
+      return Promise.resolve();
+    }
+    return postJson("/folder/tree.json", {}).then(function (data) {
+      var currentValue = selectedValue != null ? String(selectedValue) : String(select.value || "");
+      var options = ["<option value=\"\">루트</option>"].concat((data.items || []).map(function (folder) {
+        var value = String(folder.folder_id || "");
+        var label = folder.folder_path || folder.folder_name || ("#" + value);
+        return "<option value=\"" + escapeAttr(value) + "\">" + escapeHtml(label) + "</option>";
+      }));
+      select.innerHTML = options.join("");
+      select.value = currentValue;
+    }).catch(function () {
+      return undefined;
+    });
+  }
+
   function formatDateTime(value) {
     if (!value) {
       return "";
@@ -28,7 +84,7 @@
       + "<div>" + kindLabel(item.content_kind) + " / " + formatSize(Number(item.file_size || 0)) + "</div>"
       + "<div>원본 생성일 " + formatDateTime(item.original_created_at) + "</div>"
       + "<div class=\"card-actions\">"
-      + "<button class=\"btn danger\" type=\"button\" data-action=\"delete-file\" data-file-id=\"" + encodeURIComponent(item.file_id || "") + "\">삭제</button>"
+      + "<button class=\"btn danger\" type=\"button\" data-permission=\"delete\" data-action=\"delete-file\" data-file-id=\"" + encodeURIComponent(item.file_id || "") + "\">삭제</button>"
       + "</div>"
       + "</div>"
       + "</article>";
@@ -110,11 +166,24 @@
   }
 
   global.Webhard = {
+    applyPermissions: applyPermissions,
     authHeaders: authHeaders,
+    can: can,
+    currentUser: currentUser,
+    filterByPermission: filterByPermission,
     formatDateTime: formatDateTime,
     mediaCard: mediaCard,
+    populateFolderSelect: populateFolderSelect,
     postJson: postJson,
     kindLabel: kindLabel,
     formatSize: formatSize
   };
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", function () {
+      applyPermissions();
+    });
+  } else {
+    applyPermissions();
+  }
 })(window);

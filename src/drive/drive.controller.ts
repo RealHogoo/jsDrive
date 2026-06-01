@@ -1,7 +1,12 @@
 import { Body, Controller, Post, Req, UploadedFile, UploadedFiles, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
+import { randomUUID } from 'crypto';
 import { Request } from 'express';
+import { diskStorage } from 'multer';
+import { tmpdir } from 'os';
+import { extname } from 'path';
 import { RequirePermission } from '../auth/require-permission.decorator';
+import { hasAnyWebhardPermission, hasPermission, isAdmin } from '../auth/permission.util';
 import { ok } from '../common/api-response';
 import { traceId } from '../common/request-util';
 import { uploadLimits } from '../common/upload-limit';
@@ -9,6 +14,12 @@ import { DriveService } from './drive.service';
 import { IndexingService } from './indexing.service';
 
 const UPLOAD_LIMITS = uploadLimits();
+const UPLOAD_STORAGE = diskStorage({
+  destination: tmpdir(),
+  filename: (_request, file, callback) => {
+    callback(null, `webhard-upload-${randomUUID()}${extname(file.originalname || '')}`);
+  },
+});
 
 @Controller()
 export class DriveController {
@@ -20,6 +31,11 @@ export class DriveController {
   @Post('folder/list.json')
   async folderList(@Body() body: Record<string, unknown> = {}, @Req() request: Request) {
     return ok(await this.driveService.folderList(body, viewer(request)), traceId(request));
+  }
+
+  @Post('folder/tree.json')
+  async folderTree(@Req() request: Request) {
+    return ok(await this.driveService.folderTree(viewer(request)), traceId(request));
   }
 
   @RequirePermission('WRITE')
@@ -77,6 +93,24 @@ export class DriveController {
     return ok(await this.driveService.dashboardSummary(body, viewer(request)), traceId(request));
   }
 
+  @Post('me.json')
+  async currentUser(@Req() request: Request) {
+    const currentUser = request.auth?.currentUser;
+    const roles = currentUser?.roles || [];
+    const servicePermissions = currentUser?.service_permissions || {};
+    return ok({
+      user_id: currentUser?.user_id || '',
+      roles,
+      is_admin: isAdmin(roles),
+      permissions: {
+        any: isAdmin(roles) || hasAnyWebhardPermission(servicePermissions),
+        write: isAdmin(roles) || hasPermission(servicePermissions, 'WRITE'),
+        delete: isAdmin(roles) || hasPermission(servicePermissions, 'DELETE'),
+        share: isAdmin(roles) || hasPermission(servicePermissions, 'SHARE'),
+      },
+    }, traceId(request));
+  }
+
   @RequirePermission('DELETE')
   @Post('file/delete.json')
   async deleteFile(@Body() body: Record<string, unknown> = {}, @Req() request: Request) {
@@ -114,7 +148,10 @@ export class DriveController {
 
   @RequirePermission('WRITE')
   @Post('file/upload.json')
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: UPLOAD_LIMITS.maxFileBytes } }))
+  @UseInterceptors(FileInterceptor('file', {
+    storage: UPLOAD_STORAGE,
+    limits: { fileSize: UPLOAD_LIMITS.maxFileBytes },
+  }))
   async uploadFile(
     @Body() body: Record<string, unknown>,
     @UploadedFile() file: Express.Multer.File,
@@ -125,7 +162,10 @@ export class DriveController {
 
   @RequirePermission('WRITE')
   @Post('file/upload-batch.json')
-  @UseInterceptors(FilesInterceptor('files', 100, { limits: { fileSize: UPLOAD_LIMITS.maxFileBytes } }))
+  @UseInterceptors(FilesInterceptor('files', 100, {
+    storage: UPLOAD_STORAGE,
+    limits: { fileSize: UPLOAD_LIMITS.maxFileBytes },
+  }))
   async uploadFiles(
     @Body() body: Record<string, unknown>,
     @UploadedFiles() files: Express.Multer.File[],
@@ -158,6 +198,22 @@ export class DriveController {
   @Post('share/create.json')
   async createShare(@Body() body: Record<string, unknown>, @Req() request: Request) {
     return ok(await this.driveService.createShare(body, viewer(request)), traceId(request));
+  }
+
+  @Post('share/list.json')
+  async shareList(@Body() body: Record<string, unknown> = {}, @Req() request: Request) {
+    return ok(await this.driveService.shareList(body, viewer(request)), traceId(request));
+  }
+
+  @RequirePermission('SHARE')
+  @Post('share/revoke.json')
+  async revokeShare(@Body() body: Record<string, unknown> = {}, @Req() request: Request) {
+    return ok(await this.driveService.revokeShare(body, viewer(request)), traceId(request));
+  }
+
+  @Post('audit/list.json')
+  async auditList(@Body() body: Record<string, unknown> = {}, @Req() request: Request) {
+    return ok(await this.driveService.auditList(body, viewer(request)), traceId(request));
   }
 
   @RequirePermission('WRITE')

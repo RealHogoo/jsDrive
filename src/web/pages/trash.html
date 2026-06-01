@@ -17,6 +17,8 @@
       <a href="/search.html">검색</a>
       <a href="/download-jobs.html">다운로드</a>
       <a class="active" href="/trash.html">휴지통</a>
+      <a href="/shares.html" data-permission="share">공유</a>
+      <a href="/audit.html">기록</a>
       <a href="/indexing.html">인덱싱</a>
     </nav>
   </header>
@@ -27,7 +29,7 @@
         <label class="inline-control">보존일
           <input id="retentionDays" class="input small-input" type="number" min="1" value="30">
         </label>
-        <button id="purgeOld" class="btn danger" type="button">오래된 파일 정리</button>
+        <button id="purgeOld" class="btn danger" type="button" data-permission="delete">오래된 파일 정리</button>
       </div>
       <div id="trashSummary" class="summary"></div>
     </section>

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { createHash, randomBytes, randomUUID, scryptSync } from 'crypto';
-import { mkdir, readFile, unlink, writeFile } from 'fs/promises';
+import { mkdir, readFile, rename, unlink, writeFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import { extname, isAbsolute, join, relative, resolve, sep } from 'path';
 import sharp from 'sharp';
@@ -14,6 +14,12 @@ import { IndexingService } from './indexing.service';
 export interface Viewer {
   userId: string;
   roles: string[];
+}
+
+interface AuditDetail {
+  target_type?: string;
+  target_id?: number | null;
+  detail?: Record<string, unknown>;
 }
 
 @Injectable()
@@ -39,6 +45,33 @@ export class DriveService {
     return { items: result.rows };
   }
 
+  async folderTree(viewer: Viewer): Promise<Record<string, unknown>> {
+    const result = await this.databaseService.query(
+      `
+      WITH RECURSIVE folders AS (
+        SELECT folder_id, parent_folder_id, folder_name, folder_name::text AS folder_path, 1 AS depth
+        FROM wh_folder
+        WHERE owner_user_id = $1
+          AND parent_folder_id IS NULL
+          AND deleted_yn = 'N'
+        UNION ALL
+        SELECT child.folder_id, child.parent_folder_id, child.folder_name,
+               folders.folder_path || ' / ' || child.folder_name,
+               folders.depth + 1
+        FROM wh_folder child
+        JOIN folders ON child.parent_folder_id = folders.folder_id
+        WHERE child.owner_user_id = $1
+          AND child.deleted_yn = 'N'
+      )
+      SELECT folder_id, parent_folder_id, folder_name, folder_path, depth
+      FROM folders
+      ORDER BY folder_path ASC, folder_id ASC
+      `,
+      [viewer.userId],
+    );
+    return { items: result.rows };
+  }
+
   async saveFolder(params: Record<string, unknown>, viewer: Viewer): Promise<Record<string, unknown>> {
     const folderId = optionalNumber(params.folder_id, 'folder_id');
     const parentFolderId = optionalNumber(params.parent_folder_id, 'parent_folder_id');
@@ -54,7 +87,9 @@ export class DriveService {
         `,
         [viewer.userId, parentFolderId, folderName],
       );
-      return { folder_id: result.rows[0]?.folder_id };
+      const folder = { folder_id: result.rows[0]?.folder_id };
+      await this.audit('FOLDER_CREATE', viewer, { target_type: 'FOLDER', target_id: folder.folder_id as number | null });
+      return folder;
     }
 
     const result = await this.databaseService.query<{ folder_id: number }>(
@@ -74,7 +109,9 @@ export class DriveService {
     if (result.rowCount === 0) {
       throw ApiException.badRequest('folder not found');
     }
-    return { folder_id: result.rows[0]?.folder_id };
+    const folder = { folder_id: result.rows[0]?.folder_id };
+    await this.audit('FOLDER_UPDATE', viewer, { target_type: 'FOLDER', target_id: folder.folder_id as number | null });
+    return folder;
   }
 
   async moveFolder(params: Record<string, unknown>, viewer: Viewer): Promise<Record<string, unknown>> {
@@ -123,7 +160,9 @@ export class DriveService {
     if (result.rowCount === 0) {
       throw ApiException.badRequest('folder not found or invalid target folder');
     }
-    return { folder_id: result.rows[0]?.folder_id, parent_folder_id: parentFolderId };
+    const folder = { folder_id: result.rows[0]?.folder_id, parent_folder_id: parentFolderId };
+    await this.audit('FOLDER_MOVE', viewer, { target_type: 'FOLDER', target_id: folder.folder_id as number | null });
+    return folder;
   }
 
   async fileList(params: Record<string, unknown>, viewer: Viewer): Promise<Record<string, unknown>> {
@@ -205,6 +244,7 @@ export class DriveService {
     if (result.rowCount === 0) {
       throw ApiException.badRequest('file not found');
     }
+    await this.audit('FILE_METADATA_UPDATE', viewer, { target_type: 'FILE', target_id: fileId });
     return result.rows[0];
   }
 
@@ -237,6 +277,7 @@ export class DriveService {
     if (result.rowCount === 0) {
       throw ApiException.badRequest('file not found or invalid target folder');
     }
+    await this.audit('FILE_MOVE', viewer, { target_type: 'FILE', target_id: fileId });
     return result.rows[0];
   }
 
@@ -412,7 +453,9 @@ export class DriveService {
     if (result.rowCount === 0) {
       throw ApiException.badRequest('file not found');
     }
-    return { file_id: result.rows[0]?.file_id };
+    const file = { file_id: result.rows[0]?.file_id };
+    await this.audit('FILE_DELETE', viewer, { target_type: 'FILE', target_id: file.file_id as number | null });
+    return file;
   }
 
   async trashList(params: Record<string, unknown>, viewer: Viewer): Promise<Record<string, unknown>> {
@@ -459,7 +502,9 @@ export class DriveService {
     if (result.rowCount === 0) {
       throw ApiException.badRequest('file not found');
     }
-    return { file_id: result.rows[0]?.file_id };
+    const file = { file_id: result.rows[0]?.file_id };
+    await this.audit('FILE_RESTORE', viewer, { target_type: 'FILE', target_id: file.file_id as number | null });
+    return file;
   }
 
   async purgeFile(params: Record<string, unknown>, viewer: Viewer): Promise<Record<string, unknown>> {
@@ -486,6 +531,7 @@ export class DriveService {
     if (file.thumbnail_path) {
       await removeFileIfExists(file.thumbnail_path);
     }
+    await this.audit('FILE_PURGE', viewer, { target_type: 'FILE', target_id: file.file_id });
     return { file_id: file.file_id };
   }
 
@@ -511,6 +557,9 @@ export class DriveService {
         await removeFileIfExists(file.thumbnail_path);
       }
     }
+    await this.audit('TRASH_PURGE_OLD', viewer, {
+      detail: { retention_days: retentionDays, purged_count: result.rowCount || 0 },
+    });
     return { retention_days: retentionDays, purged_count: result.rowCount || 0 };
   }
 
@@ -632,7 +681,9 @@ export class DriveService {
       `,
       [viewer.userId, folderId, fileName, fileSize, contentType, contentKind, storagePath, null, originalCreatedAt, contentSha256],
     );
-    return { file_id: result.rows[0]?.file_id };
+    const file = { file_id: result.rows[0]?.file_id };
+    await this.audit('FILE_REGISTER', viewer, { target_type: 'FILE', target_id: file.file_id as number | null });
+    return file;
   }
 
   async uploadFile(
@@ -652,9 +703,10 @@ export class DriveService {
     const fileName = normalizeFileName(file.originalname);
     const contentKind = contentKindFor(contentType, fileName);
     if (contentKind === 'OTHER') {
+      await removeTempUploadedFile(file);
       throw ApiException.badRequest('image, video, and document files can be uploaded');
     }
-    const contentSha256 = fileHash(file);
+    const contentSha256 = await fileHash(file);
     const detectedOriginalCreatedAt = await detectOriginalCreatedAt(file, originalCreatedAt, contentKind);
 
     const stored = await saveUploadedFile(file, detectedOriginalCreatedAt, viewer.userId, fileName);
@@ -684,7 +736,7 @@ export class DriveService {
         contentSha256,
       ],
     );
-    return {
+    const uploaded = {
       file_id: result.rows[0]?.file_id,
       public_path: stored.publicPath,
       original_created_at: detectedOriginalCreatedAt,
@@ -694,6 +746,8 @@ export class DriveService {
       duplicate_count: duplicateInfo.count,
       duplicate_files: duplicateInfo.items,
     };
+    await this.audit('FILE_UPLOAD', viewer, { target_type: 'FILE', target_id: uploaded.file_id as number | null });
+    return uploaded;
   }
 
   async uploadFiles(
@@ -718,12 +772,13 @@ export class DriveService {
       const contentType = file.mimetype || 'application/octet-stream';
       const contentKind = contentKindFor(contentType, fileName);
       if (contentKind === 'OTHER') {
+        await removeTempUploadedFile(file);
         throw ApiException.badRequest('image, video, and document files can be uploaded');
       }
       const requestedOriginalCreatedAt = optionalTimestamp(originalCreatedAtList[index], 'original_created_at')
         || new Date().toISOString();
       const originalCreatedAt = await detectOriginalCreatedAt(file, requestedOriginalCreatedAt, contentKind);
-      const contentSha256 = fileHash(file);
+      const contentSha256 = await fileHash(file);
       const duplicateInfo = await this.duplicateInfo(viewer.userId, contentSha256);
       const stored = await saveUploadedFile(file, originalCreatedAt, viewer.userId, fileName);
       const thumbnailPath = await createThumbnail(contentKind, stored.storagePath, viewer.userId, originalCreatedAt, stored.storedName);
@@ -762,6 +817,7 @@ export class DriveService {
         duplicate_count: duplicateInfo.count,
         duplicate_files: duplicateInfo.items,
       });
+      await this.audit('FILE_UPLOAD', viewer, { target_type: 'FILE', target_id: result.rows[0]?.file_id || null });
     }
 
     return { items, count: items.length };
@@ -952,12 +1008,96 @@ export class DriveService {
       `,
       [viewer.userId, folderId, fileId, passwordHash, maxDownloadCount, expiresAt],
     );
-    return {
+    const share = {
       ...(result.rows[0] || {}),
       expires_at: expiresAt,
       max_download_count: maxDownloadCount,
       password_required: !!passwordHash,
     };
+    await this.audit('SHARE_CREATE', viewer, {
+      target_type: fileId != null ? 'FILE' : 'FOLDER',
+      target_id: fileId ?? folderId,
+      detail: { share_id: share.share_id, password_required: !!passwordHash, max_download_count: maxDownloadCount },
+    });
+    return share;
+  }
+
+  async shareList(params: Record<string, unknown>, viewer: Viewer): Promise<Record<string, unknown>> {
+    const offset = optionalNumber(params.offset, 'offset') || 0;
+    const limit = Math.min(Math.max(optionalNumber(params.limit, 'limit') || 20, 1), 100);
+    const result = await this.databaseService.query(
+      `
+      SELECT s.share_id, s.folder_id, s.file_id, s.share_token, s.max_download_count,
+             s.download_count, s.expires_at, s.revoked_yn, s.created_at, s.updated_at,
+             CASE WHEN s.password_hash IS NULL THEN false ELSE true END AS password_required,
+             f.file_name, f.display_name, folder.folder_name
+      FROM wh_share s
+      LEFT JOIN wh_file f ON f.file_id = s.file_id
+      LEFT JOIN wh_folder folder ON folder.folder_id = s.folder_id
+      WHERE s.owner_user_id = $1
+      ORDER BY s.created_at DESC, s.share_id DESC
+      LIMIT $2 OFFSET $3
+      `,
+      [viewer.userId, limit + 1, offset],
+    );
+    const rows = result.rows.slice(0, limit);
+    return {
+      items: rows,
+      offset,
+      limit,
+      next_offset: offset + rows.length,
+      has_more: result.rows.length > limit,
+    };
+  }
+
+  async revokeShare(params: Record<string, unknown>, viewer: Viewer): Promise<Record<string, unknown>> {
+    const shareId = requiredNumber(params.share_id, 'share_id is required');
+    const result = await this.databaseService.query<{ share_id: number }>(
+      `
+      UPDATE wh_share
+      SET revoked_yn = 'Y',
+          updated_at = CURRENT_TIMESTAMP,
+          updated_by = $2
+      WHERE share_id = $1
+        AND owner_user_id = $2
+        AND revoked_yn = 'N'
+      RETURNING share_id
+      `,
+      [shareId, viewer.userId],
+    );
+    if (result.rowCount === 0) {
+      throw ApiException.badRequest('share not found');
+    }
+    await this.audit('SHARE_REVOKE', viewer, { target_type: 'SHARE', target_id: shareId });
+    return { share_id: shareId };
+  }
+
+  async auditList(params: Record<string, unknown>, viewer: Viewer): Promise<Record<string, unknown>> {
+    const offset = optionalNumber(params.offset, 'offset') || 0;
+    const limit = Math.min(Math.max(optionalNumber(params.limit, 'limit') || 20, 1), 100);
+    const includeAllUsers = isAdminViewer(viewer) && optionalBoolean(params.all_users);
+    try {
+      const result = await this.databaseService.query(
+        `
+        SELECT log_id, actor_user_id, action_cd, target_type, target_id, detail_json, created_at
+        FROM wh_audit_log
+        WHERE ($2::boolean OR actor_user_id = $1)
+        ORDER BY log_id DESC
+        LIMIT $3 OFFSET $4
+        `,
+        [viewer.userId, includeAllUsers, limit + 1, offset],
+      );
+      const rows = result.rows.slice(0, limit);
+      return {
+        items: rows,
+        offset,
+        limit,
+        next_offset: offset + rows.length,
+        has_more: result.rows.length > limit,
+      };
+    } catch {
+      return { items: [], offset, limit, next_offset: offset, has_more: false };
+    }
   }
 
   private async duplicateInfo(ownerUserId: string, contentSha256: string): Promise<{ count: number; items: Record<string, unknown>[] }> {
@@ -1024,6 +1164,29 @@ export class DriveService {
       throw ApiException.badRequest('share target not found');
     }
   }
+
+  private async audit(action: string, viewer: Viewer, detail: AuditDetail = {}): Promise<void> {
+    try {
+      await this.databaseService.query(
+        `
+        INSERT INTO wh_audit_log (
+          actor_user_id, action_cd, target_type, target_id, detail_json, created_by, updated_by
+        ) VALUES (
+          $1, $2, $3, $4, $5::jsonb, $1, $1
+        )
+        `,
+        [
+          viewer.userId,
+          action,
+          detail.target_type || null,
+          detail.target_id || null,
+          JSON.stringify(detail.detail || {}),
+        ],
+      );
+    } catch {
+      undefined;
+    }
+  }
 }
 
 function requiredText(value: unknown, message: string): string {
@@ -1047,8 +1210,18 @@ function normalizeTags(value: unknown): string | null {
     .join(', ');
 }
 
-function fileHash(file: Express.Multer.File): string {
-  return createHash('sha256').update(file.buffer).digest('hex');
+async function fileHash(file: Express.Multer.File): Promise<string> {
+  return createHash('sha256').update(await fileBytes(file)).digest('hex');
+}
+
+async function fileBytes(file: Express.Multer.File): Promise<Buffer> {
+  if (file.buffer) {
+    return file.buffer;
+  }
+  if (file.path) {
+    return readFile(file.path);
+  }
+  return Buffer.alloc(0);
 }
 
 async function detectOriginalCreatedAt(
@@ -1060,7 +1233,8 @@ async function detectOriginalCreatedAt(
     return fallback;
   }
   try {
-    const metadata = await sharp(file.buffer).metadata();
+    const input = file.path || file.buffer;
+    const metadata = await sharp(input).metadata();
     const exif = metadata.exif?.toString('latin1') || '';
     const match = exif.match(/(20\d{2}|19\d{2}):(\d{2}):(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/);
     if (!match) {
@@ -1355,13 +1529,28 @@ async function saveUploadedFile(
   const absoluteDir = join(root, relativeDir);
   await mkdir(absoluteDir, { recursive: true });
   const absolutePath = join(absoluteDir, storedName);
-  await writeFile(absolutePath, file.buffer);
+  if (file.path) {
+    await rename(file.path, absolutePath);
+  } else {
+    await writeFile(absolutePath, file.buffer);
+  }
   const publicPath = `/storage/${ownerDir}/${yyyy}/${mm}/${dd}/${storedName}`;
   return {
     storagePath: absolutePath,
     publicPath,
     storedName,
   };
+}
+
+async function removeTempUploadedFile(file: Express.Multer.File): Promise<void> {
+  if (!file.path) {
+    return;
+  }
+  try {
+    await unlink(file.path);
+  } catch {
+    // Temporary upload cleanup is best-effort.
+  }
 }
 
 async function createThumbnail(

@@ -49,6 +49,7 @@
     document.getElementById("fileMemo").value = item.memo || "";
     document.getElementById("fileTags").value = item.tags || "";
     document.getElementById("targetFolderId").value = item.folder_id || "";
+    Webhard.populateFolderSelect("targetFolderId", item.folder_id || "");
     renderDuplicates(item.duplicates || []);
     viewer.replaceChildren(mediaElement(item, mediaPath));
   }

@@ -48,6 +48,7 @@
   });
 
   loadUploadLimits();
+  Webhard.populateFolderSelect(folderInput);
   renderFiles();
 
   function addFiles(files) {
