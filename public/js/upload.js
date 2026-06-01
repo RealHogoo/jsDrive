@@ -148,7 +148,7 @@
       });
       var body = await response.json();
       if (!response.ok || body.ok !== true) {
-        showError(body.message || "업로드에 실패했습니다.");
+        showError(uploadErrorMessage(body.message));
         return;
       }
       message.textContent = "업로드 완료: " + body.data.count + "개";
@@ -184,6 +184,26 @@
   function showError(text) {
     message.className = "message error";
     message.textContent = text;
+  }
+
+  function uploadErrorMessage(text) {
+    var messageText = String(text || "");
+    if (/unsupported file type|document files can be uploaded/i.test(messageText)) {
+      return "지원하지 않는 파일 형식입니다. 이미지, 동영상, 문서 파일만 업로드할 수 있습니다.";
+    }
+    if (/file size must be/i.test(messageText)) {
+      return "단일 파일 용량이 제한을 초과했습니다.";
+    }
+    if (/total upload size must be/i.test(messageText)) {
+      return "전체 업로드 용량이 제한을 초과했습니다.";
+    }
+    if (/index/i.test(messageText)) {
+      return "인덱싱 작업 중에는 업로드할 수 없습니다. 작업이 끝난 뒤 다시 시도하세요.";
+    }
+    if (/permission|forbidden|unauthorized/i.test(messageText)) {
+      return "업로드 권한이 없습니다.";
+    }
+    return messageText || "업로드에 실패했습니다.";
   }
 
   function formatSize(size) {

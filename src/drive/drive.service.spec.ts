@@ -123,7 +123,17 @@ describe('DriveService management features', () => {
     await expect(service.auditList({ all_users: true }, { userId: 'ADMIN', roles: ['ROLE_ADMIN'] })).resolves.toMatchObject({
       items: [{ log_id: 1, actor_user_id: 'USER1' }],
     });
-    expect(query).toHaveBeenCalledWith(expect.stringContaining('FROM wh_audit_log'), ['ADMIN', true, 21, 0]);
+    expect(query).toHaveBeenCalledWith(expect.stringContaining('FROM wh_audit_log'), [
+      'ADMIN',
+      true,
+      21,
+      0,
+      null,
+      null,
+      null,
+      null,
+      null,
+    ]);
   });
 
   it('requires upload target folders to belong to the viewer', async () => {
@@ -191,5 +201,8 @@ function dashboardQuery(): jest.MockedFunction<MockQuery> {
     .mockResolvedValueOnce({ rows: [{ folder_count: '1' }], rowCount: 1 })
     .mockResolvedValueOnce({ rows: [{ duplicate_group_count: '1', reclaimable_bytes: '50' }], rowCount: 1 })
     .mockResolvedValueOnce({ rows: [{ file_id: 1, file_name: 'a.jpg' }], rowCount: 1 })
-    .mockResolvedValueOnce({ rows: [{ owner_user_id: 'USER1', file_count: '2', total_bytes: '100' }], rowCount: 1 });
+    .mockResolvedValueOnce({ rows: [{ owner_user_id: 'USER1', file_count: '2', total_bytes: '100' }], rowCount: 1 })
+    .mockResolvedValueOnce({ rows: [{ upload_count: '1', upload_bytes: '50' }], rowCount: 1 })
+    .mockResolvedValueOnce({ rows: [{ share_count: '2', active_share_count: '1' }], rowCount: 1 })
+    .mockResolvedValueOnce({ rows: [{ log_id: 1, action_cd: 'FILE_UPLOAD' }], rowCount: 1 });
 }

@@ -7,12 +7,25 @@
   var loadMoreButton = document.getElementById("loadMoreAudit");
   var allUsersWrap = document.getElementById("allUsersWrap");
   var allUsers = document.getElementById("allUsers");
+  var dateFrom = document.getElementById("dateFrom");
+  var dateTo = document.getElementById("dateTo");
+  var actionFilter = document.getElementById("actionFilter");
+  var targetType = document.getElementById("targetType");
+  var actorUserId = document.getElementById("actorUserId");
   var offset = 0;
   var hasMore = true;
 
   refreshButton.addEventListener("click", reset);
   loadMoreButton.addEventListener("click", loadMore);
   allUsers.addEventListener("change", reset);
+  [dateFrom, dateTo, actionFilter, targetType].forEach(function (element) {
+    element.addEventListener("change", reset);
+  });
+  actorUserId.addEventListener("keydown", function (event) {
+    if (event.key === "Enter") {
+      reset();
+    }
+  });
 
   Webhard.currentUser().then(function (user) {
     allUsersWrap.hidden = user && user.is_admin !== true;
@@ -35,7 +48,12 @@
       var data = await Webhard.postJson("/audit/list.json", {
         offset: offset,
         limit: 30,
-        all_users: allUsers.checked
+        all_users: allUsers.checked,
+        date_from: dateFrom.value,
+        date_to: dateTo.value,
+        action_cd: actionFilter.value,
+        target_type: targetType.value,
+        actor_user_id: actorUserId.value
       });
       var items = data.items || [];
       if (items.length > 0) {

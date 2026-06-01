@@ -353,7 +353,7 @@ export class DriveService {
 
   async dashboardSummary(_params: Record<string, unknown>, viewer: Viewer): Promise<Record<string, unknown>> {
     const includeAllUsers = isAdminViewer(viewer);
-    const [totals, byKind, folders, duplicateGroups, recent, byOwner] = await Promise.all([
+    const [totals, byKind, folders, duplicateGroups, recent, byOwner, todayUploads, shareSummary, recentAudit] = await Promise.all([
       this.databaseService.query(
         `
         SELECT COUNT(*) AS file_count,
@@ -422,6 +422,41 @@ export class DriveService {
         LIMIT 20
         `,
       ) : Promise.resolve({ rows: [] }),
+      this.databaseService.query(
+        `
+        SELECT COUNT(*) AS upload_count,
+               COALESCE(SUM(file_size), 0) AS upload_bytes
+        FROM wh_file
+        WHERE ($2::boolean OR owner_user_id = $1)
+          AND created_at >= CURRENT_DATE
+          AND created_at < CURRENT_DATE + INTERVAL '1 day'
+          AND deleted_yn = 'N'
+        `,
+        [viewer.userId, includeAllUsers],
+      ),
+      this.databaseService.query(
+        `
+        SELECT COUNT(*) AS share_count,
+               COUNT(*) FILTER (
+                 WHERE revoked_yn = 'N'
+                   AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
+                   AND (max_download_count IS NULL OR download_count < max_download_count)
+               ) AS active_share_count
+        FROM wh_share
+        WHERE ($2::boolean OR owner_user_id = $1)
+        `,
+        [viewer.userId, includeAllUsers],
+      ),
+      this.databaseService.query(
+        `
+        SELECT log_id, actor_user_id, action_cd, target_type, target_id, created_at
+        FROM wh_audit_log
+        WHERE ($2::boolean OR actor_user_id = $1)
+        ORDER BY log_id DESC
+        LIMIT 5
+        `,
+        [viewer.userId, includeAllUsers],
+      ).catch(() => ({ rows: [] })),
     ]);
     return {
       scope: includeAllUsers ? 'ALL_USERS' : 'CURRENT_USER',
@@ -431,6 +466,9 @@ export class DriveService {
       by_owner: byOwner.rows,
       duplicates: duplicateGroups.rows[0] || {},
       recent_files: recent.rows,
+      today_uploads: todayUploads.rows[0] || {},
+      shares: shareSummary.rows[0] || {},
+      recent_audit: recentAudit.rows,
     };
   }
 
@@ -704,7 +742,7 @@ export class DriveService {
     const contentKind = contentKindFor(contentType, fileName);
     if (contentKind === 'OTHER') {
       await removeTempUploadedFile(file);
-      throw ApiException.badRequest('image, video, and document files can be uploaded');
+      throw ApiException.badRequest('unsupported file type. image, video, and document files can be uploaded');
     }
     const contentSha256 = await fileHash(file);
     const detectedOriginalCreatedAt = await detectOriginalCreatedAt(file, originalCreatedAt, contentKind);
@@ -773,7 +811,7 @@ export class DriveService {
       const contentKind = contentKindFor(contentType, fileName);
       if (contentKind === 'OTHER') {
         await removeTempUploadedFile(file);
-        throw ApiException.badRequest('image, video, and document files can be uploaded');
+        throw ApiException.badRequest('unsupported file type. image, video, and document files can be uploaded');
       }
       const requestedOriginalCreatedAt = optionalTimestamp(originalCreatedAtList[index], 'original_created_at')
         || new Date().toISOString();
@@ -1029,6 +1067,12 @@ export class DriveService {
       `
       SELECT s.share_id, s.folder_id, s.file_id, s.share_token, s.max_download_count,
              s.download_count, s.expires_at, s.revoked_yn, s.created_at, s.updated_at,
+             CASE
+               WHEN s.revoked_yn = 'Y' THEN 'REVOKED'
+               WHEN s.expires_at IS NOT NULL AND s.expires_at <= CURRENT_TIMESTAMP THEN 'EXPIRED'
+               WHEN s.max_download_count IS NOT NULL AND s.download_count >= s.max_download_count THEN 'LIMIT_REACHED'
+               ELSE 'ACTIVE'
+             END AS status_cd,
              CASE WHEN s.password_hash IS NULL THEN false ELSE true END AS password_required,
              f.file_name, f.display_name, folder.folder_name
       FROM wh_share s
@@ -1076,16 +1120,26 @@ export class DriveService {
     const offset = optionalNumber(params.offset, 'offset') || 0;
     const limit = Math.min(Math.max(optionalNumber(params.limit, 'limit') || 20, 1), 100);
     const includeAllUsers = isAdminViewer(viewer) && optionalBoolean(params.all_users);
+    const actorUserId = optionalText(params.actor_user_id);
+    const actionCd = optionalText(params.action_cd);
+    const targetType = optionalText(params.target_type);
+    const dateFrom = optionalDateOnly(params.date_from);
+    const dateTo = optionalDateOnly(params.date_to);
     try {
       const result = await this.databaseService.query(
         `
         SELECT log_id, actor_user_id, action_cd, target_type, target_id, detail_json, created_at
         FROM wh_audit_log
         WHERE ($2::boolean OR actor_user_id = $1)
+          AND ($5::varchar IS NULL OR actor_user_id = $5)
+          AND ($6::varchar IS NULL OR action_cd = $6)
+          AND ($7::varchar IS NULL OR target_type = $7)
+          AND ($8::date IS NULL OR created_at >= $8::date)
+          AND ($9::date IS NULL OR created_at < ($9::date + INTERVAL '1 day'))
         ORDER BY log_id DESC
         LIMIT $3 OFFSET $4
         `,
-        [viewer.userId, includeAllUsers, limit + 1, offset],
+        [viewer.userId, includeAllUsers, limit + 1, offset, actorUserId, actionCd, targetType, dateFrom, dateTo],
       );
       const rows = result.rows.slice(0, limit);
       return {

@@ -45,14 +45,14 @@
   function row(item) {
     var name = item.display_name || item.file_name || item.folder_name || "-";
     var url = "/s/" + encodeURIComponent(item.share_token || "");
-    var status = item.revoked_yn === "Y" ? "해지됨" : "활성";
-    var revokeButton = item.revoked_yn === "Y" ? "" : "<button class=\"btn danger\" type=\"button\" data-permission=\"share\" data-action=\"revoke\">해지</button>";
+    var revokeButton = item.status_cd === "REVOKED" ? "" : "<button class=\"btn danger\" type=\"button\" data-permission=\"share\" data-action=\"revoke\">해지</button>";
     return "<article class=\"management-row\" data-share-id=\"" + escapeAttr(item.share_id) + "\">"
       + "<div><strong>" + escapeHtml(name) + "</strong><span>" + escapeHtml(url) + "</span></div>"
-      + "<span>" + status + "</span>"
+      + "<span>" + statusLabel(item.status_cd) + "</span>"
       + "<span>" + Webhard.formatDateTime(item.created_at) + "</span>"
-      + "<span>다운로드 " + escapeHtml(item.download_count || 0) + "</span>"
+      + "<span>다운로드 " + escapeHtml(item.download_count || 0) + limitText(item) + "</span>"
       + "<div class=\"card-actions\">"
+      + "<a class=\"btn\" href=\"" + escapeAttr(url) + "\" target=\"_blank\" rel=\"noopener\">열기</a>"
       + "<button class=\"btn\" type=\"button\" data-action=\"copy\" data-url=\"" + escapeAttr(url) + "\">복사</button>"
       + revokeButton
       + "</div>"
@@ -67,7 +67,7 @@
     var rowElement = button.closest("[data-share-id]");
     var action = button.getAttribute("data-action");
     if (action === "copy") {
-      await navigator.clipboard.writeText(window.location.origin + button.getAttribute("data-url"));
+      await copyText(window.location.origin + button.getAttribute("data-url"));
       summary.textContent = "공유 링크를 복사했습니다.";
       return;
     }
@@ -75,6 +75,42 @@
       await Webhard.postJson("/share/revoke.json", { share_id: rowElement.getAttribute("data-share-id") });
       reset();
     }
+  }
+
+  function statusLabel(value) {
+    if (value === "EXPIRED") {
+      return "만료";
+    }
+    if (value === "LIMIT_REACHED") {
+      return "제한 초과";
+    }
+    if (value === "REVOKED") {
+      return "해지됨";
+    }
+    return "활성";
+  }
+
+  function limitText(item) {
+    return item.max_download_count ? " / " + escapeHtml(item.max_download_count) : "";
+  }
+
+  function copyText(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text).catch(function () {
+        fallbackCopy(text);
+      });
+    }
+    fallbackCopy(text);
+    return Promise.resolve();
+  }
+
+  function fallbackCopy(text) {
+    var input = document.createElement("input");
+    input.value = text;
+    document.body.appendChild(input);
+    input.select();
+    document.execCommand("copy");
+    input.remove();
   }
 
   function escapeHtml(value) {
