@@ -244,3 +244,9 @@ npm test -- --runInBand
 npm run build
 npm run check:encoding
 ```
+
+## 운영 문서
+
+운영 배포, SQL 적용 순서, 환경변수, 백업/복구, 정기 점검, 장애 대응 절차는 다음 문서를 기준으로 관리합니다.
+
+- [웹하드 운영 문서](docs/webhard/operations.md)
