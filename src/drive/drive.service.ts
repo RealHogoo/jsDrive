@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { createHash, randomBytes, randomUUID, scryptSync } from 'crypto';
-import { mkdir, readFile, rename, unlink, writeFile } from 'fs/promises';
-import { existsSync } from 'fs';
+import { mkdir, rename, unlink, writeFile } from 'fs/promises';
+import { createReadStream, existsSync } from 'fs';
 import { extname, isAbsolute, join, relative, resolve, sep } from 'path';
 import sharp from 'sharp';
 import { ApiException } from '../common/api-exception';
@@ -202,6 +202,9 @@ export class DriveService {
       throw ApiException.badRequest('file not found');
     }
     const file = result.rows[0] as Record<string, unknown>;
+    if (!file.content_sha256) {
+      return { ...file, duplicates: [] };
+    }
     const duplicateResult = await this.databaseService.query(
       `
       SELECT file_id, file_name, display_name, file_size, created_at
@@ -325,12 +328,14 @@ export class DriveService {
     );
     let updated = 0;
     let skipped = 0;
+    const root = resolvedStorageRoot();
     for (const file of result.rows) {
-      if (!file.storage_path || !existsSync(file.storage_path)) {
+      const storagePath = safeExistingStoragePath(file.storage_path, root);
+      if (!storagePath) {
         skipped++;
         continue;
       }
-      const hash = createHash('sha256').update(await readFile(file.storage_path)).digest('hex');
+      const hash = await hashFile(storagePath);
       await this.databaseService.query(
         `
         UPDATE wh_file
@@ -565,9 +570,10 @@ export class DriveService {
     if (!file) {
       throw ApiException.badRequest('file not found');
     }
-    await removeFileIfExists(file.storage_path);
+    const root = resolvedStorageRoot();
+    await removeFileIfExists(file.storage_path, root);
     if (file.thumbnail_path) {
-      await removeFileIfExists(file.thumbnail_path);
+      await removeFileIfExists(file.thumbnail_path, root);
     }
     await this.audit('FILE_PURGE', viewer, { target_type: 'FILE', target_id: file.file_id });
     return { file_id: file.file_id };
@@ -589,10 +595,11 @@ export class DriveService {
       `,
       [viewer.userId, retentionDays],
     );
+    const root = resolvedStorageRoot();
     for (const file of result.rows) {
-      await removeFileIfExists(file.storage_path);
+      await removeFileIfExists(file.storage_path, root);
       if (file.thumbnail_path) {
-        await removeFileIfExists(file.thumbnail_path);
+        await removeFileIfExists(file.thumbnail_path, root);
       }
     }
     await this.audit('TRASH_PURGE_OLD', viewer, {
@@ -646,34 +653,44 @@ export class DriveService {
 
   async rebuildThumbnails(params: Record<string, unknown>, viewer: Viewer): Promise<Record<string, unknown>> {
     const limit = Math.min(Math.max(optionalNumber(params.limit, 'limit') || 50, 1), 200);
+    const fileId = optionalNumber(params.file_id, 'file_id');
+    const includeAllUsers = isAdminViewer(viewer);
+    const fileFilter = fileId ? 'AND file_id = $3' : '';
+    const ownerFilter = fileId ? 'AND ($4::boolean OR owner_user_id = $1)' : 'AND ($3::boolean OR owner_user_id = $1)';
+    const thumbnailFilter = fileId ? '' : 'AND thumbnail_path IS NULL';
     const result = await this.databaseService.query<{
       file_id: number;
+      owner_user_id: string;
       file_name: string;
       storage_path: string;
       content_kind: 'IMAGE' | 'VIDEO' | 'DOCUMENT' | 'OTHER';
       original_created_at: string;
     }>(
       `
-      SELECT file_id, file_name, storage_path, content_kind, original_created_at
+      SELECT file_id, owner_user_id, file_name, storage_path, content_kind, original_created_at
       FROM wh_file
-      WHERE owner_user_id = $1
+      WHERE 1 = 1
+        ${ownerFilter}
         AND deleted_yn = 'N'
         AND content_kind IN ('IMAGE', 'VIDEO')
-        AND thumbnail_path IS NULL
+        ${thumbnailFilter}
+        ${fileFilter}
       ORDER BY file_id ASC
       LIMIT $2
       `,
-      [viewer.userId, limit],
+      fileId ? [viewer.userId, limit, fileId, includeAllUsers] : [viewer.userId, limit, includeAllUsers],
     );
     let updated = 0;
+    const root = resolvedStorageRoot();
     for (const file of result.rows) {
-      if (!file.storage_path || !existsSync(file.storage_path)) {
+      const storagePath = safeExistingStoragePath(file.storage_path, root);
+      if (!storagePath) {
         continue;
       }
       const thumbnailPath = await createThumbnail(
         file.content_kind,
-        file.storage_path,
-        viewer.userId,
+        storagePath,
+        file.owner_user_id,
         file.original_created_at || new Date().toISOString(),
         file.file_name,
       );
@@ -729,97 +746,28 @@ export class DriveService {
     file: Express.Multer.File | undefined,
     viewer: Viewer,
   ): Promise<Record<string, unknown>> {
-    await this.indexingService.ensureNotRunning(viewer);
-    if (!file) {
-      throw ApiException.badRequest('file is required');
-    }
-    validateUploadSizes([file]);
-    const folderId = optionalNumber(params.folder_id, 'folder_id');
-    await this.ensureOwnedFolder(folderId, viewer);
-    const originalCreatedAt = optionalTimestamp(params.original_created_at, 'original_created_at') || new Date().toISOString();
-    const contentType = file.mimetype || 'application/octet-stream';
-    const fileName = normalizeFileName(file.originalname);
-    const contentKind = contentKindFor(contentType, fileName);
-    if (contentKind === 'OTHER') {
-      await removeTempUploadedFile(file);
-      throw ApiException.badRequest('unsupported file type. image, video, and document files can be uploaded');
-    }
-    const contentSha256 = await fileHash(file);
-    const detectedOriginalCreatedAt = await detectOriginalCreatedAt(file, originalCreatedAt, contentKind);
-
-    const stored = await saveUploadedFile(file, detectedOriginalCreatedAt, viewer.userId, fileName);
-    const thumbnailPath = await createThumbnail(contentKind, stored.storagePath, viewer.userId, detectedOriginalCreatedAt, stored.storedName);
-    const duplicateInfo = await this.duplicateInfo(viewer.userId, contentSha256);
-    const result = await this.databaseService.query<{ file_id: number }>(
-      `
-      INSERT INTO wh_file (
-        owner_user_id, folder_id, file_name, file_size, content_type, content_kind,
-        storage_path, public_path, thumbnail_path, original_created_at, content_sha256, created_by, updated_by
-      ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, CAST($10 AS timestamp), $11, $1, $1
-      )
-      RETURNING file_id
-      `,
-      [
-        viewer.userId,
-        folderId,
-        fileName,
-        file.size,
-        contentType,
-        contentKind,
-        stored.storagePath,
-        stored.publicPath,
-        thumbnailPath,
-        detectedOriginalCreatedAt,
-        contentSha256,
-      ],
-    );
-    const uploaded = {
-      file_id: result.rows[0]?.file_id,
-      public_path: stored.publicPath,
-      original_created_at: detectedOriginalCreatedAt,
-      content_kind: contentKind,
-      thumbnail_path: thumbnailPath,
-      content_sha256: contentSha256,
-      duplicate_count: duplicateInfo.count,
-      duplicate_files: duplicateInfo.items,
-    };
-    await this.audit('FILE_UPLOAD', viewer, { target_type: 'FILE', target_id: uploaded.file_id as number | null });
-    return uploaded;
-  }
-
-  async uploadFiles(
-    params: Record<string, unknown>,
-    files: Express.Multer.File[] | undefined,
-    viewer: Viewer,
-  ): Promise<Record<string, unknown>> {
-    await this.indexingService.ensureNotRunning(viewer);
-    const uploadFiles = files || [];
-    if (uploadFiles.length === 0) {
-      throw ApiException.badRequest('files are required');
-    }
-    validateUploadSizes(uploadFiles);
-    const folderId = optionalNumber(params.folder_id, 'folder_id');
-    await this.ensureOwnedFolder(folderId, viewer);
-    const originalCreatedAtList = arrayParam(params.original_created_at);
-
-    const items = [];
-    for (let index = 0; index < uploadFiles.length; index++) {
-      const file = uploadFiles[index];
-      const fileName = normalizeFileName(file.originalname);
+    try {
+      await this.indexingService.ensureNotRunning(viewer);
+      if (!file) {
+        throw ApiException.badRequest('file is required');
+      }
+      validateUploadSizes([file]);
+      const folderId = optionalNumber(params.folder_id, 'folder_id');
+      await this.ensureOwnedFolder(folderId, viewer);
+      const originalCreatedAt = optionalTimestamp(params.original_created_at, 'original_created_at') || new Date().toISOString();
       const contentType = file.mimetype || 'application/octet-stream';
+      const fileName = normalizeFileName(file.originalname);
       const contentKind = contentKindFor(contentType, fileName);
       if (contentKind === 'OTHER') {
-        await removeTempUploadedFile(file);
         throw ApiException.badRequest('unsupported file type. image, video, and document files can be uploaded');
       }
-      const requestedOriginalCreatedAt = optionalTimestamp(originalCreatedAtList[index], 'original_created_at')
-        || new Date().toISOString();
-      const originalCreatedAt = await detectOriginalCreatedAt(file, requestedOriginalCreatedAt, contentKind);
       const contentSha256 = await fileHash(file);
-      const duplicateInfo = await this.duplicateInfo(viewer.userId, contentSha256);
-      const stored = await saveUploadedFile(file, originalCreatedAt, viewer.userId, fileName);
-      const thumbnailPath = await createThumbnail(contentKind, stored.storagePath, viewer.userId, originalCreatedAt, stored.storedName);
+      const detectedOriginalCreatedAt = await detectOriginalCreatedAt(file, originalCreatedAt, contentKind);
+      const duplicateInfoPromise = this.duplicateInfo(viewer.userId, contentSha256);
+
+      const stored = await saveUploadedFile(file, detectedOriginalCreatedAt, viewer.userId, fileName);
+      const thumbnailPath = await createThumbnail(contentKind, stored.storagePath, viewer.userId, detectedOriginalCreatedAt, stored.storedName);
+      const duplicateInfo = await duplicateInfoPromise;
       const result = await this.databaseService.query<{ file_id: number }>(
         `
         INSERT INTO wh_file (
@@ -840,22 +788,104 @@ export class DriveService {
           stored.storagePath,
           stored.publicPath,
           thumbnailPath,
-          originalCreatedAt,
+          detectedOriginalCreatedAt,
           contentSha256,
         ],
       );
-      items.push({
+      const uploaded = {
         file_id: result.rows[0]?.file_id,
-        file_name: fileName,
         public_path: stored.publicPath,
-        original_created_at: originalCreatedAt,
+        original_created_at: detectedOriginalCreatedAt,
         content_kind: contentKind,
         thumbnail_path: thumbnailPath,
         content_sha256: contentSha256,
         duplicate_count: duplicateInfo.count,
         duplicate_files: duplicateInfo.items,
-      });
-      await this.audit('FILE_UPLOAD', viewer, { target_type: 'FILE', target_id: result.rows[0]?.file_id || null });
+      };
+      await this.audit('FILE_UPLOAD', viewer, { target_type: 'FILE', target_id: uploaded.file_id as number | null });
+      return uploaded;
+    } catch (exception) {
+      if (file) {
+        await removeTempUploadedFile(file);
+      }
+      throw exception;
+    }
+  }
+
+  async uploadFiles(
+    params: Record<string, unknown>,
+    files: Express.Multer.File[] | undefined,
+    viewer: Viewer,
+  ): Promise<Record<string, unknown>> {
+    await this.indexingService.ensureNotRunning(viewer);
+    const uploadFiles = files || [];
+    if (uploadFiles.length === 0) {
+      throw ApiException.badRequest('files are required');
+    }
+    validateUploadSizes(uploadFiles);
+    const folderId = optionalNumber(params.folder_id, 'folder_id');
+    await this.ensureOwnedFolder(folderId, viewer);
+    const originalCreatedAtList = arrayParam(params.original_created_at);
+
+    const items = [];
+    try {
+      for (let index = 0; index < uploadFiles.length; index++) {
+        const file = uploadFiles[index];
+        const fileName = normalizeFileName(file.originalname);
+        const contentType = file.mimetype || 'application/octet-stream';
+        const contentKind = contentKindFor(contentType, fileName);
+        if (contentKind === 'OTHER') {
+          await removeTempUploadedFile(file);
+          throw ApiException.badRequest('unsupported file type. image, video, and document files can be uploaded');
+        }
+        const requestedOriginalCreatedAt = optionalTimestamp(originalCreatedAtList[index], 'original_created_at')
+          || new Date().toISOString();
+        const originalCreatedAt = await detectOriginalCreatedAt(file, requestedOriginalCreatedAt, contentKind);
+        const contentSha256 = await fileHash(file);
+        const duplicateInfoPromise = this.duplicateInfo(viewer.userId, contentSha256);
+        const stored = await saveUploadedFile(file, originalCreatedAt, viewer.userId, fileName);
+        const thumbnailPath = await createThumbnail(contentKind, stored.storagePath, viewer.userId, originalCreatedAt, stored.storedName);
+        const duplicateInfo = await duplicateInfoPromise;
+        const result = await this.databaseService.query<{ file_id: number }>(
+          `
+          INSERT INTO wh_file (
+            owner_user_id, folder_id, file_name, file_size, content_type, content_kind,
+            storage_path, public_path, thumbnail_path, original_created_at, content_sha256, created_by, updated_by
+          ) VALUES (
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, CAST($10 AS timestamp), $11, $1, $1
+          )
+          RETURNING file_id
+          `,
+          [
+            viewer.userId,
+            folderId,
+            fileName,
+            file.size,
+            contentType,
+            contentKind,
+            stored.storagePath,
+            stored.publicPath,
+            thumbnailPath,
+            originalCreatedAt,
+            contentSha256,
+          ],
+        );
+        items.push({
+          file_id: result.rows[0]?.file_id,
+          file_name: fileName,
+          public_path: stored.publicPath,
+          original_created_at: originalCreatedAt,
+          content_kind: contentKind,
+          thumbnail_path: thumbnailPath,
+          content_sha256: contentSha256,
+          duplicate_count: duplicateInfo.count,
+          duplicate_files: duplicateInfo.items,
+        });
+        await this.audit('FILE_UPLOAD', viewer, { target_type: 'FILE', target_id: result.rows[0]?.file_id || null });
+      }
+    } catch (exception) {
+      await Promise.all(uploadFiles.map((file) => removeTempUploadedFile(file)));
+      throw exception;
     }
 
     return { items, count: items.length };
@@ -1265,17 +1295,23 @@ function normalizeTags(value: unknown): string | null {
 }
 
 async function fileHash(file: Express.Multer.File): Promise<string> {
-  return createHash('sha256').update(await fileBytes(file)).digest('hex');
-}
-
-async function fileBytes(file: Express.Multer.File): Promise<Buffer> {
   if (file.buffer) {
-    return file.buffer;
+    return createHash('sha256').update(file.buffer).digest('hex');
   }
   if (file.path) {
-    return readFile(file.path);
+    return hashFile(file.path);
   }
-  return Buffer.alloc(0);
+  return createHash('sha256').digest('hex');
+}
+
+async function hashFile(path: string): Promise<string> {
+  return new Promise((resolveHash, rejectHash) => {
+    const digest = createHash('sha256');
+    const stream = createReadStream(path);
+    stream.on('data', (chunk) => digest.update(chunk));
+    stream.on('error', rejectHash);
+    stream.on('end', () => resolveHash(digest.digest('hex')));
+  });
 }
 
 async function detectOriginalCreatedAt(
@@ -1508,23 +1544,29 @@ function buildExistingWeeks(
   items: Record<string, unknown>[],
   sortBasis: 'ORIGINAL_CREATED' | 'UPLOADED',
 ): Record<string, unknown>[] {
+  const itemsByWeek = new Map<string, Record<string, unknown>[]>();
+  for (const item of items) {
+    const basisDate = optionalText(sortBasis === 'UPLOADED' ? item.created_at : item.original_created_at);
+    if (!basisDate) {
+      continue;
+    }
+    const weekKey = toDateOnly(startOfWeek(new Date(basisDate)));
+    const bucket = itemsByWeek.get(weekKey);
+    if (bucket) {
+      bucket.push(item);
+    } else {
+      itemsByWeek.set(weekKey, [item]);
+    }
+  }
   return weeks.map((week) => {
     const start = dateOnlyToUtc(week.week_start);
     const end = new Date(start);
     end.setUTCDate(end.getUTCDate() + 7);
-    const bucketItems = items.filter((item) => {
-      const basisDate = optionalText(sortBasis === 'UPLOADED' ? item.created_at : item.original_created_at);
-      if (!basisDate) {
-        return false;
-      }
-      const itemDate = new Date(basisDate);
-      return itemDate >= start && itemDate < end;
-    });
     return {
       week_start: start.toISOString(),
       week_end: end.toISOString(),
       label: `${toDateOnly(start)} ~ ${previousDate(toDateOnly(end))}`,
-      items: bucketItems,
+      items: itemsByWeek.get(toDateOnly(start)) || [],
       item_count: Number(week.item_count || 0),
     };
   });
@@ -1623,10 +1665,27 @@ async function createThumbnail(
   return null;
 }
 
-async function removeFileIfExists(path: string): Promise<void> {
-  if (path && existsSync(path)) {
-    await unlink(path).catch(() => undefined);
+async function removeFileIfExists(path: string, root = resolvedStorageRoot()): Promise<void> {
+  const safePath = safeExistingStoragePath(path, root);
+  if (safePath) {
+    await unlink(safePath).catch(() => undefined);
   }
+}
+
+function safeExistingStoragePath(value: string | null | undefined, root = resolvedStorageRoot()): string | null {
+  if (!value) {
+    return null;
+  }
+  const target = resolve(String(value));
+  const pathFromRoot = relative(root, target);
+  if (pathFromRoot === '' || pathFromRoot === '..' || pathFromRoot.startsWith(`..${sep}`) || isAbsolute(pathFromRoot)) {
+    return null;
+  }
+  return existsSync(target) ? target : null;
+}
+
+function resolvedStorageRoot(): string {
+  return resolve(storageRoot());
 }
 
 function normalizeFileName(fileName: string): string {

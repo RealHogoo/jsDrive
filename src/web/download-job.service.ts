@@ -4,8 +4,9 @@ import { once } from 'events';
 import { createWriteStream, existsSync } from 'fs';
 import { unlink } from 'fs/promises';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { isAbsolute, join, relative, resolve } from 'path';
 import { ApiException } from '../common/api-exception';
+import { storageRoot } from '../common/storage-path';
 import { DatabaseService } from '../database/database.service';
 
 const archiver = require('archiver') as (format: string, options: { zlib: { level: number } }) => any;
@@ -118,9 +119,11 @@ export class DownloadJobService implements OnModuleInit, OnModuleDestroy {
       [viewer.userId, retentionDays],
     );
     let removedCount = 0;
+    const root = resolvedDownloadRoot();
     for (const job of result.rows) {
-      if (job.zip_path && existsSync(job.zip_path)) {
-        await unlink(job.zip_path).then(() => {
+      const zipPath = safeExistingDownloadPath(job.zip_path, root);
+      if (zipPath) {
+        await unlink(zipPath).then(() => {
           removedCount++;
         }).catch(() => undefined);
       }
@@ -158,9 +161,11 @@ export class DownloadJobService implements OnModuleInit, OnModuleDestroy {
       [retentionDays],
     );
     let removedCount = 0;
+    const root = resolvedDownloadRoot();
     for (const job of result.rows) {
-      if (job.zip_path && existsSync(job.zip_path)) {
-        await unlink(job.zip_path).then(() => {
+      const zipPath = safeExistingDownloadPath(job.zip_path, root);
+      if (zipPath) {
+        await unlink(zipPath).then(() => {
           removedCount++;
         }).catch(() => undefined);
       }
@@ -200,10 +205,11 @@ export class DownloadJobService implements OnModuleInit, OnModuleDestroy {
       [jobId, ownerUserId],
     );
     const job = result.rows[0];
-    if (!job?.zip_path || !existsSync(job.zip_path)) {
+    const zipPath = safeExistingDownloadPath(job?.zip_path);
+    if (!job || !zipPath) {
       return null;
     }
-    return job;
+    return { ...job, zip_path: zipPath };
   }
 
   private async runWeekDownload(
@@ -218,7 +224,10 @@ export class DownloadJobService implements OnModuleInit, OnModuleDestroy {
     }
     try {
       const files = await this.weekFiles(ownerUserId, weekStart, sortBasis, contentKind);
-      const existingFiles = files.filter((file) => file.storage_path && existsSync(file.storage_path));
+      const root = resolvedStorageRoot();
+      const existingFiles = files
+        .map((file) => ({ ...file, storage_path: safeExistingStoragePath(file.storage_path, root) || '' }))
+        .filter((file) => file.storage_path);
       const limits = weekDownloadLimits();
       const totalBytes = existingFiles.reduce((sum, file) => sum + Number(file.file_size || 0), 0);
       if (existingFiles.length === 0) {
@@ -385,6 +394,38 @@ function weekDownloadLimits(): { maxFiles: number; maxBytes: number } {
 
 function downloadRetentionDays(): number {
   return positiveNumberEnv('WEBHARD_DOWNLOAD_JOB_RETENTION_DAYS') || 7;
+}
+
+function safeExistingStoragePath(value: string | null | undefined, root = resolvedStorageRoot()): string | null {
+  if (!value) {
+    return null;
+  }
+  const candidate = resolve(String(value));
+  const rel = relative(root, candidate);
+  if (rel.startsWith('..') || isAbsolute(rel)) {
+    return null;
+  }
+  return existsSync(candidate) ? candidate : null;
+}
+
+function safeExistingDownloadPath(value: string | null | undefined, root = resolvedDownloadRoot()): string | null {
+  if (!value) {
+    return null;
+  }
+  const candidate = resolve(String(value));
+  const rel = relative(root, candidate);
+  if (rel.startsWith('..') || isAbsolute(rel)) {
+    return null;
+  }
+  return existsSync(candidate) ? candidate : null;
+}
+
+function resolvedStorageRoot(): string {
+  return resolve(storageRoot());
+}
+
+function resolvedDownloadRoot(): string {
+  return resolve(tmpdir());
 }
 
 function positiveNumberEnv(key: string): number | null {

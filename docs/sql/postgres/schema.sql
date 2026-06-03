@@ -176,6 +176,12 @@ CREATE INDEX IF NOT EXISTS idx_wh_file_13
 CREATE INDEX IF NOT EXISTS idx_wh_file_14
     ON wh_file (owner_user_id, deleted_yn, original_created_at DESC, file_id DESC);
 
+CREATE INDEX IF NOT EXISTS idx_wh_file_15
+    ON wh_file (deleted_yn, content_kind, updated_at DESC, file_id DESC);
+
+CREATE INDEX IF NOT EXISTS idx_wh_file_16
+    ON wh_file (owner_user_id, deleted_yn, content_kind, updated_at DESC, file_id DESC);
+
 CREATE INDEX IF NOT EXISTS idx_wh_share_02
     ON wh_share (owner_user_id, created_at DESC, share_id DESC);
 

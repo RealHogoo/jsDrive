@@ -3,10 +3,11 @@ import { scryptSync, timingSafeEqual } from 'crypto';
 import { once } from 'events';
 import { Request, Response } from 'express';
 import { existsSync, readFileSync } from 'fs';
-import { join } from 'path';
+import { isAbsolute, join, relative, resolve } from 'path';
 import { hasAnyWebhardPermission, isAdmin } from '../auth/permission.util';
 import { Public } from '../auth/public.decorator';
 import { authToken } from '../common/request-util';
+import { storageRoot } from '../common/storage-path';
 import { DatabaseService } from '../database/database.service';
 import { AdminServiceClient } from '../integration/admin/admin-service.client';
 import { VersionService } from '../version/version.service';
@@ -165,7 +166,9 @@ export class WebController {
     } | null,
     response: Response,
   ): Promise<void> {
-    if (!share || !share.storage_path || !existsSync(share.storage_path)) {
+    const root = resolvedStorageRoot();
+    const storagePath = safeExistingStoragePath(share?.storage_path, root);
+    if (!share || !storagePath) {
       this.renderError(response, 404, '공유 파일을 찾을 수 없습니다.');
       return;
     }
@@ -178,7 +181,7 @@ export class WebController {
       `,
       [share.share_id],
     );
-    response.download(share.storage_path, share.display_name || share.file_name || 'download');
+    response.download(storagePath, share.display_name || share.file_name || 'download');
   }
 
   private async sendSharedFolder(
@@ -190,7 +193,10 @@ export class WebController {
     response: Response,
   ): Promise<void> {
     const files = await this.sharedFolderFiles(share.folder_id);
-    const existingFiles = files.filter((file) => file.storage_path && existsSync(file.storage_path));
+    const root = resolvedStorageRoot();
+    const existingFiles = files
+      .map((file) => ({ ...file, storage_path: safeExistingStoragePath(file.storage_path, root) || '' }))
+      .filter((file) => file.storage_path);
     if (existingFiles.length === 0) {
       this.renderError(response, 404, '공유 폴더에 다운로드할 파일이 없습니다.');
       return;
@@ -271,20 +277,21 @@ export class WebController {
     if (!currentUser) {
       return;
     }
-    const file = await this.findOwnedFile(fileId, currentUser.user_id);
-    if (!file || !file.storage_path || !existsSync(file.storage_path)) {
+    const file = await this.findOwnedFile(fileId, currentUser.user_id, isAdmin(currentUser.roles));
+    const storagePath = safeExistingStoragePath(file?.storage_path);
+    if (!file || !storagePath) {
       this.renderError(response, 404, '요청한 파일을 찾을 수 없습니다.');
       return;
     }
     const contentType = safeInlineContentType(file.content_type);
     if (!contentType) {
-      response.download(file.storage_path, file.file_name || 'download');
+      response.download(storagePath, file.file_name || 'download');
       return;
     }
     response.setHeader('X-Content-Type-Options', 'nosniff');
     response.setHeader('Content-Security-Policy', "default-src 'none'; media-src 'self'; img-src 'self'; style-src 'none'; script-src 'none'; sandbox");
     response.type(contentType);
-    response.sendFile(file.storage_path);
+    response.sendFile(storagePath);
   }
 
   @Public()
@@ -294,13 +301,14 @@ export class WebController {
     if (!currentUser) {
       return;
     }
-    const file = await this.findOwnedFile(fileId, currentUser.user_id);
-    if (!file || !file.thumbnail_path || !existsSync(file.thumbnail_path)) {
+    const file = await this.findOwnedFile(fileId, currentUser.user_id, isAdmin(currentUser.roles));
+    const thumbnailPath = safeExistingStoragePath(file?.thumbnail_path);
+    if (!file || !thumbnailPath) {
       this.renderError(response, 404, '썸네일을 찾을 수 없습니다.');
       return;
     }
     response.type('image/webp');
-    response.sendFile(file.thumbnail_path);
+    response.sendFile(thumbnailPath);
   }
 
   @Public()
@@ -310,12 +318,13 @@ export class WebController {
     if (!currentUser) {
       return;
     }
-    const file = await this.findOwnedFile(fileId, currentUser.user_id);
-    if (!file || !file.storage_path || !existsSync(file.storage_path)) {
+    const file = await this.findOwnedFile(fileId, currentUser.user_id, isAdmin(currentUser.roles));
+    const storagePath = safeExistingStoragePath(file?.storage_path);
+    if (!file || !storagePath) {
       this.renderError(response, 404, '다운로드할 파일을 찾을 수 없습니다.');
       return;
     }
-    response.download(file.storage_path, file.file_name || 'download');
+    response.download(storagePath, file.file_name || 'download');
   }
 
   @Public()
@@ -406,7 +415,7 @@ export class WebController {
     response.status(status).type('html').send(html);
   }
 
-  private async findOwnedFile(fileId: string, ownerUserId: string) {
+  private async findOwnedFile(fileId: string, ownerUserId: string, includeAllUsers = false) {
     const parsedFileId = Number(fileId);
     if (!Number.isSafeInteger(parsedFileId) || parsedFileId <= 0) {
       return null;
@@ -421,10 +430,10 @@ export class WebController {
       SELECT file_name, storage_path, thumbnail_path, content_type
       FROM wh_file
       WHERE file_id = $1
-        AND owner_user_id = $2
+        AND ($3::boolean OR owner_user_id = $2)
         AND deleted_yn = 'N'
       `,
-      [parsedFileId, ownerUserId],
+      [parsedFileId, ownerUserId, includeAllUsers],
     );
     return result.rows[0] || null;
   }
@@ -574,6 +583,22 @@ function escapeHtml(value: string): string {
 
 function safeDownloadName(value: string): string {
   return String(value || 'download').replace(/[\\/:*?"<>|]/g, '_').trim() || 'download';
+}
+
+function safeExistingStoragePath(value: string | null | undefined, root = resolvedStorageRoot()): string | null {
+  if (!value) {
+    return null;
+  }
+  const candidate = resolve(String(value));
+  const rel = relative(root, candidate);
+  if (rel.startsWith('..') || isAbsolute(rel)) {
+    return null;
+  }
+  return existsSync(candidate) ? candidate : null;
+}
+
+function resolvedStorageRoot(): string {
+  return resolve(storageRoot());
 }
 
 function sharedZipEntryName(
