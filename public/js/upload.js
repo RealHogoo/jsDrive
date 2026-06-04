@@ -141,12 +141,13 @@
     }
 
     try {
-      var response = await fetch("/file/upload-batch.json", {
+      var result = await Webhard.request("/file/upload-batch.json", {
         method: "POST",
         headers: Webhard.authHeaders(),
         body: formData
       });
-      var body = await response.json();
+      var response = result.response;
+      var body = result.body;
       if (!response.ok || body.ok !== true) {
         showError(uploadErrorMessage(body.message));
         return;
@@ -161,11 +162,12 @@
 
   async function loadUploadLimits() {
     try {
-      var response = await fetch("/upload/limits.json", {
+      var result = await Webhard.request("/upload/limits.json", {
         method: "POST",
         headers: { "Content-Type": "application/json" }
       });
-      var body = await response.json();
+      var response = result.response;
+      var body = result.body;
       if (!response.ok || body.ok !== true) {
         return;
       }

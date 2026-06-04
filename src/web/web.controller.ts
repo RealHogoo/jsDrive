@@ -384,7 +384,10 @@ export class WebController {
     }
 
     const html = pageHtml(pageName);
-    response.type('html').send(injectVersionBadge(html, this.versionService.version()));
+    response.type('html').send(injectWebhardBootstrap(
+      injectVersionBadge(html, this.versionService.version()),
+      `${adminPublicBaseUrl(request)}/service-login-page.do`,
+    ));
   }
 
   private async currentUser(request: Request) {
@@ -594,6 +597,14 @@ function injectVersionBadge(html: string, version: { service: string; revision: 
     return html.replace('</body>', `${badge}</body>`);
   }
   return `${html}${badge}`;
+}
+
+function injectWebhardBootstrap(html: string, adminLoginUrl: string): string {
+  const bootstrap = `<script>window.WEBHARD_ADMIN_LOGIN_URL=${JSON.stringify(adminLoginUrl)};</script>`;
+  if (html.includes('</head>')) {
+    return html.replace('</head>', `${bootstrap}</head>`);
+  }
+  return `${bootstrap}${html}`;
 }
 
 function escapeHtml(value: string): string {

@@ -5,6 +5,27 @@
     return {};
   }
 
+  function loginUrl() {
+    var returnUrl = global.location.href;
+    var base = global.WEBHARD_ADMIN_LOGIN_URL || "/service-login-page.do";
+    return base + "?service_nm=" + encodeURIComponent("Webhard Service")
+      + "&return_url=" + encodeURIComponent(returnUrl);
+  }
+
+  function isAuthInvalid(response, body) {
+    var code = String((body && body.code) || "").toUpperCase();
+    return response.status === 401 || code === "UNAUTHORIZED" || code === "AUTH_REQUIRED";
+  }
+
+  function handleUnauthorized() {
+    if (global.__WEBHARD_AUTH_REDIRECTING) {
+      return;
+    }
+    global.__WEBHARD_AUTH_REDIRECTING = true;
+    global.alert("로그인 정보가 유효하지 않습니다. 다시 로그인해 주세요.");
+    global.location.href = loginUrl();
+  }
+
   var currentUserPromise = null;
   var currentUserCache = null;
 
@@ -110,13 +131,27 @@
       + "</div>";
   }
 
+  async function request(url, options) {
+    var response = await fetch(url, options || {});
+    var contentType = response.headers.get("content-type") || "";
+    var data = contentType.indexOf("application/json") >= 0
+      ? await response.json()
+      : { message: "HTTP " + response.status };
+    if (isAuthInvalid(response, data)) {
+      handleUnauthorized();
+      throw new Error((data && data.message) || "로그인 정보가 유효하지 않습니다.");
+    }
+    return { response: response, body: data };
+  }
+
   async function postJson(url, body) {
-    var response = await fetch(url, {
+    var result = await request(url, {
       method: "POST",
       headers: Object.assign({ "Content-Type": "application/json" }, authHeaders()),
       body: JSON.stringify(body || {})
     });
-    var data = await response.json();
+    var response = result.response;
+    var data = result.body;
     if (!response.ok || data.ok !== true) {
       throw new Error(data.message || "요청에 실패했습니다.");
     }
@@ -175,6 +210,7 @@
     mediaCard: mediaCard,
     populateFolderSelect: populateFolderSelect,
     postJson: postJson,
+    request: request,
     kindLabel: kindLabel,
     formatSize: formatSize
   };
