@@ -479,6 +479,7 @@ export class DriveService {
 
   async deleteFile(params: Record<string, unknown>, viewer: Viewer): Promise<Record<string, unknown>> {
     const fileId = requiredNumber(params.file_id, 'file_id is required');
+    const includeAllUsers = isAdminViewer(viewer);
     const result = await this.databaseService.query<{ file_id: number }>(
       `
       UPDATE wh_file
@@ -487,11 +488,11 @@ export class DriveService {
           updated_at = CURRENT_TIMESTAMP,
           updated_by = $2
       WHERE file_id = $1
-        AND owner_user_id = $2
+        AND ($3::boolean OR owner_user_id = $2)
         AND deleted_yn = 'N'
       RETURNING file_id
       `,
-      [fileId, viewer.userId],
+      [fileId, viewer.userId, includeAllUsers],
     );
     if (result.rowCount === 0) {
       throw ApiException.badRequest('file not found');
