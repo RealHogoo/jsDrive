@@ -489,9 +489,7 @@ export class WebController {
   }
 
   private loginUrl(request: Request): string {
-    const adminBaseUrl = trimTrailingSlash(
-      process.env.ADMIN_SERVICE_PUBLIC_BASE_URL || process.env.ADMIN_SERVICE_BASE_URL || 'http://localhost:8081',
-    );
+    const adminBaseUrl = adminPublicBaseUrl(request);
     const returnUrl = `${publicBaseUrl(request)}${request.originalUrl || '/'}`;
     return `${adminBaseUrl}/service-login-page.do?service_nm=${encodeURIComponent('Webhard Service')}`
       + `&return_url=${encodeURIComponent(returnUrl)}`;
@@ -531,6 +529,31 @@ function publicBaseUrl(request: Request): string {
     || request.header('host')
     || 'localhost:8083';
   return `${proto}://${host}`;
+}
+
+function adminPublicBaseUrl(request: Request): string {
+  const configured = trimTrailingSlash(process.env.ADMIN_SERVICE_PUBLIC_BASE_URL || '');
+  if (configured) {
+    return configured;
+  }
+  const internal = trimTrailingSlash(process.env.ADMIN_SERVICE_BASE_URL || '');
+  if (internal && !isLocalhostUrl(internal)) {
+    return internal;
+  }
+  const currentBaseUrl = publicBaseUrl(request);
+  if (isLocalhostUrl(currentBaseUrl)) {
+    return internal || 'http://localhost:8081';
+  }
+  return currentBaseUrl;
+}
+
+function isLocalhostUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '::1';
+  } catch {
+    return false;
+  }
 }
 
 function firstHeaderValue(value: string | undefined): string | null {
