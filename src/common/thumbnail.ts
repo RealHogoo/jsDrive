@@ -37,22 +37,24 @@ export async function createVideoThumbnail(
   ownerUserId: string,
   originalCreatedAt: string,
   sourceFileName: string,
+  seekSeconds = 1,
 ): Promise<string | null> {
   const ffmpeg = process.env.FFMPEG_PATH || 'ffmpeg';
   try {
+    const normalizedSeekSeconds = normalizeSeekSeconds(seekSeconds);
     const ownerDir = safePathSegment(ownerUserId);
     const date = new Date(originalCreatedAt);
     const yyyy = String(date.getUTCFullYear());
     const mm = String(date.getUTCMonth() + 1).padStart(2, '0');
     const dd = String(date.getUTCDate()).padStart(2, '0');
     const baseName = basename(sourceFileName, extname(sourceFileName));
-    const name = thumbnailFileName(baseName, sourcePath);
+    const name = thumbnailFileName(baseName, sourcePath, `video-${normalizedSeekSeconds}`);
     const targetPath = join(storageRoot(), ownerDir, '.thumbs', yyyy, mm, dd, name);
     await mkdir(dirname(targetPath), { recursive: true });
     await runFfmpeg(ffmpeg, [
       '-y',
       '-ss',
-      '00:00:01',
+      formatFfmpegSeek(normalizedSeekSeconds),
       '-i',
       sourcePath,
       '-frames:v',
@@ -67,10 +69,26 @@ export async function createVideoThumbnail(
   }
 }
 
-function thumbnailFileName(baseName: string, sourcePath: string): string {
+function thumbnailFileName(baseName: string, sourcePath: string, variant = ''): string {
   const safeName = baseName.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 80) || 'file';
-  const hash = createHash('sha1').update(sourcePath).digest('hex').slice(0, 12);
+  const hash = createHash('sha1').update(`${sourcePath}:${variant}`).digest('hex').slice(0, 12);
   return `${safeName}-${hash}.webp`;
+}
+
+function normalizeSeekSeconds(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 1;
+  }
+  return Math.min(Math.max(Math.floor(value * 1000) / 1000, 0), 24 * 60 * 60);
+}
+
+function formatFfmpegSeek(totalSeconds: number): string {
+  const wholeSeconds = Math.floor(totalSeconds);
+  const milliseconds = Math.round((totalSeconds - wholeSeconds) * 1000);
+  const hours = Math.floor(wholeSeconds / 3600);
+  const minutes = Math.floor((wholeSeconds % 3600) / 60);
+  const seconds = wholeSeconds % 60;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${String(milliseconds).padStart(3, '0')}`;
 }
 
 function runFfmpeg(command: string, args: string[]): Promise<void> {

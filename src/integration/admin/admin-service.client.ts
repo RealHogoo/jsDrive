@@ -7,6 +7,11 @@ export interface CurrentUser {
   service_permissions: Record<string, string[]>;
 }
 
+export interface ServiceStatus {
+  service_cd: string;
+  use_yn: string;
+}
+
 interface CachedCurrentUser {
   currentUser: CurrentUser;
   expiresAtMillis: number;
@@ -65,6 +70,52 @@ export class AdminServiceClient {
       expiresAtMillis: now + 5000,
     });
     return cloneCurrentUser(currentUser);
+  }
+
+  async fetchServiceStatus(accessToken: string, serviceCode: string): Promise<ServiceStatus | null> {
+    const token = accessToken.trim();
+    const targetServiceCode = normalizeCode(serviceCode);
+    if (!token || !targetServiceCode) {
+      return null;
+    }
+
+    let response: Response;
+    try {
+      response = await fetch(`${this.adminServiceBaseUrl}/health/service/list.json`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: '{}',
+      });
+    } catch (_exception) {
+      return null;
+    }
+    if (!response.ok) {
+      return null;
+    }
+
+    const body = (await response.json()) as {
+      ok?: boolean;
+      data?: unknown;
+    };
+    if (body.ok !== true || !Array.isArray(body.data)) {
+      return null;
+    }
+    for (const item of body.data) {
+      if (!item || typeof item !== 'object') {
+        continue;
+      }
+      const row = item as Record<string, unknown>;
+      if (normalizeCode(String(row.service_cd || '')) === targetServiceCode) {
+        return {
+          service_cd: String(row.service_cd || ''),
+          use_yn: String(row.use_yn || ''),
+        };
+      }
+    }
+    return null;
   }
 }
 

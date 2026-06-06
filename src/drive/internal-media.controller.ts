@@ -1,0 +1,198 @@
+import { Body, Controller, ForbiddenException, Post, Req, Res } from '@nestjs/common';
+import { createReadStream } from 'fs';
+import { Request, Response } from 'express';
+import { Public } from '../auth/public.decorator';
+import { ok } from '../common/api-response';
+import { traceId } from '../common/request-util';
+import { AdminServiceClient, CurrentUser } from '../integration/admin/admin-service.client';
+import { hasAnyServicePermission, hasServicePermission, isAdmin } from '../auth/permission.util';
+import { DriveService } from './drive.service';
+
+@Public()
+@Controller('internal/media')
+export class InternalMediaController {
+  constructor(
+    private readonly driveService: DriveService,
+    private readonly adminServiceClient: AdminServiceClient,
+  ) {}
+
+  @Post('list.json')
+  async list(@Body() body: Record<string, unknown> = {}, @Req() request: Request) {
+    ensureInternalAccess(request);
+    const scopedBody = await this.scopedBody(request, body);
+    return ok(await this.driveService.internalMediaList(scopedBody), traceId(request));
+  }
+
+  @Post('file-detail.json')
+  async fileDetail(@Body() body: Record<string, unknown> = {}, @Req() request: Request) {
+    ensureInternalAccess(request);
+    const scopedBody = await this.scopedBody(request, body);
+    return ok(await this.driveService.internalMediaFileDetail(scopedBody), traceId(request));
+  }
+
+  @Post('active-ids.json')
+  async activeIds(@Body() body: Record<string, unknown> = {}, @Req() request: Request) {
+    ensureInternalAccess(request);
+    const scopedBody = await this.scopedBody(request, body);
+    return ok(await this.driveService.internalMediaActiveIds(scopedBody), traceId(request));
+  }
+
+  @Post('register-youtube.json')
+  async registerYoutube(@Body() body: Record<string, unknown> = {}, @Req() request: Request) {
+    ensureInternalAccess(request);
+    const scopedBody = await this.scopedBody(request, body, { requireWrite: true, requireAdmin: true });
+    return ok(await this.driveService.internalRegisterYoutubeFile(scopedBody), traceId(request));
+  }
+
+  @Post('mark-public.json')
+  async markPublic(@Body() body: Record<string, unknown> = {}, @Req() request: Request) {
+    ensureInternalAccess(request);
+    const scopedBody = await this.scopedBody(request, body, { requireAdmin: true });
+    return ok(await this.driveService.internalMarkMediaPublic(scopedBody), traceId(request));
+  }
+
+  @Post('file-stream.json')
+  async fileStream(@Body() body: Record<string, unknown> = {}, @Req() request: Request, @Res() response: Response) {
+    ensureInternalAccess(request);
+    const scopedBody = await this.scopedBody(request, body);
+    const file = await this.driveService.internalMediaFileStream(scopedBody);
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    response.setHeader('X-Webhard-File-Name', encodeURIComponent(file.fileName || 'download'));
+    if (file.asAttachment) {
+      response.attachment(file.fileName || 'download');
+    } else {
+      response.setHeader('Content-Security-Policy', "default-src 'none'; media-src 'self'; img-src 'self'; style-src 'none'; script-src 'none'; sandbox");
+    }
+    response.type(file.contentType);
+    createReadStream(file.storagePath).pipe(response);
+  }
+
+  @Post('ready.json')
+  async ready(@Req() request: Request) {
+    ensureInternalAccess(request);
+    return ok(await this.driveService.internalMediaReady(), traceId(request));
+  }
+
+  private async scopedBody(
+    request: Request,
+    body: Record<string, unknown>,
+    options: { requireWrite?: boolean; requireAdmin?: boolean } = {},
+  ): Promise<Record<string, unknown>> {
+    const currentUser = await this.currentAdminUser(request);
+    if (options.requireAdmin && !isAdmin(currentUser.roles)) {
+      throw new ForbiddenException('admin permission is required');
+    }
+    if (options.requireWrite && !isAdmin(currentUser.roles) && !hasServicePermission(currentUser.service_permissions, 'MEDIA_SERVICE', 'WRITE')) {
+      throw new ForbiddenException('write permission is required');
+    }
+    const viewerUserId = String(body.viewer_user_id || body.owner_user_id || '').trim();
+    if (viewerUserId && viewerUserId !== currentUser.user_id) {
+      throw new ForbiddenException('viewer user does not match admin token');
+    }
+    return {
+      ...body,
+      viewer_user_id: currentUser.user_id,
+      owner_user_id: currentUser.user_id,
+      viewer_is_admin: isAdmin(currentUser.roles),
+    };
+  }
+
+  private async currentAdminUser(request: Request): Promise<CurrentUser> {
+    const token = String(request.header('x-user-access-token') || '').trim();
+    if (!token) {
+      throw new ForbiddenException('admin user token is required');
+    }
+    const currentUser = await this.adminServiceClient.fetchCurrentUser(token);
+    if (!currentUser) {
+      throw new ForbiddenException('admin user token is invalid');
+    }
+    if (!isAdmin(currentUser.roles) && !hasAnyServicePermission(currentUser.service_permissions, 'MEDIA_SERVICE')) {
+      throw new ForbiddenException('media permission is required');
+    }
+    return currentUser;
+  }
+}
+
+function ensureInternalAccess(request: Request): void {
+  ensureInternalToken(request);
+  ensureInternalIpAllowed(request);
+}
+
+function ensureInternalToken(request: Request): void {
+  const expected = internalToken();
+  const provided = String(request.header('x-internal-api-token') || '').trim();
+  if (!expected || provided !== expected) {
+    throw new ForbiddenException('internal api token is invalid');
+  }
+}
+
+function ensureInternalIpAllowed(request: Request): void {
+  const allowed = internalAllowedIpRules();
+  const clientIp = internalClientIp(request);
+  if (!clientIp || !allowed.some((rule) => ipMatchesRule(clientIp, rule))) {
+    throw new ForbiddenException('internal api client ip is not allowed');
+  }
+}
+
+function internalToken(): string {
+  const configured = String(process.env.MEDIA_INTERNAL_API_TOKEN || process.env.WEBHARD_INTERNAL_API_TOKEN || '').trim();
+  if (configured) {
+    return configured;
+  }
+  const appEnv = String(process.env.APP_ENV || process.env.NODE_ENV || '').trim().toLowerCase();
+  return appEnv === 'prod' || appEnv === 'production' ? '' : 'dev-media-internal-token';
+}
+
+function internalAllowedIpRules(): string[] {
+  const configured = String(process.env.MEDIA_INTERNAL_ALLOWED_IPS || process.env.WEBHARD_INTERNAL_ALLOWED_IPS || '').trim();
+  if (configured) {
+    return configured.split(',').map((item) => item.trim()).filter(Boolean);
+  }
+  const appEnv = String(process.env.APP_ENV || process.env.NODE_ENV || '').trim().toLowerCase();
+  if (appEnv === 'prod' || appEnv === 'production') {
+    return [];
+  }
+  return ['127.0.0.1', '::1', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'];
+}
+
+function internalClientIp(request: Request): string {
+  const forwarded = String(process.env.TRUST_FORWARDED_HEADERS || '').toLowerCase() === 'true'
+    ? String(request.header('x-forwarded-for') || '').split(',')[0].trim()
+    : '';
+  return normalizeIp(forwarded || request.ip || request.socket.remoteAddress || '');
+}
+
+function normalizeIp(value: string): string {
+  const ip = value.trim();
+  return ip.startsWith('::ffff:') ? ip.slice('::ffff:'.length) : ip;
+}
+
+function ipMatchesRule(ip: string, rule: string): boolean {
+  if (rule === ip) {
+    return true;
+  }
+  if (!rule.includes('/')) {
+    return false;
+  }
+  const [base, bitsText] = rule.split('/');
+  const bits = Number(bitsText);
+  const ipValue = ipv4ToInt(ip);
+  const baseValue = ipv4ToInt(base);
+  if (!Number.isFinite(bits) || bits < 0 || bits > 32 || ipValue == null || baseValue == null) {
+    return false;
+  }
+  const mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0;
+  return (ipValue & mask) === (baseValue & mask);
+}
+
+function ipv4ToInt(ip: string): number | null {
+  const parts = ip.split('.');
+  if (parts.length !== 4) {
+    return null;
+  }
+  const numbers = parts.map((part) => Number(part));
+  if (numbers.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+    return null;
+  }
+  return (((numbers[0] << 24) >>> 0) + (numbers[1] << 16) + (numbers[2] << 8) + numbers[3]) >>> 0;
+}

@@ -655,6 +655,8 @@ export class DriveService {
   async rebuildThumbnails(params: Record<string, unknown>, viewer: Viewer): Promise<Record<string, unknown>> {
     const limit = Math.min(Math.max(optionalNumber(params.limit, 'limit') || 50, 1), 200);
     const fileId = optionalNumber(params.file_id, 'file_id');
+    const seekSeconds = optionalNumber(params.seek_seconds, 'seek_seconds');
+    const thumbnailSeekSeconds = seekSeconds == null ? null : Math.min(Math.max(seekSeconds, 0), 24 * 60 * 60);
     const includeAllUsers = isAdminViewer(viewer);
     const fileFilter = fileId ? 'AND file_id = $3' : '';
     const ownerFilter = fileId ? 'AND ($4::boolean OR owner_user_id = $1)' : 'AND ($3::boolean OR owner_user_id = $1)';
@@ -694,6 +696,7 @@ export class DriveService {
         file.owner_user_id,
         file.original_created_at || new Date().toISOString(),
         file.file_name,
+        thumbnailSeekSeconds,
       );
       if (!thumbnailPath) {
         continue;
@@ -711,6 +714,204 @@ export class DriveService {
       updated++;
     }
     return { scanned_count: result.rowCount || 0, updated_count: updated, has_more: (result.rowCount || 0) === limit };
+  }
+
+  async internalMediaList(params: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const viewerUserId = requiredText(params.viewer_user_id, 'viewer_user_id is required');
+    const viewerIsAdmin = Boolean(params.viewer_is_admin);
+    const limit = Math.min(Math.max(optionalNumber(params.limit, 'limit') || 500, 1), 1000);
+    const result = await this.databaseService.query(
+      `
+      SELECT file_id, owner_user_id, file_name, display_name, file_size, content_type,
+             content_kind, thumbnail_path, media_public_yn, original_created_at, created_at, updated_at
+      FROM wh_file
+      WHERE deleted_yn = 'N'
+        AND content_kind IN ('IMAGE', 'VIDEO')
+        AND ($1::boolean OR owner_user_id = $2)
+      ORDER BY updated_at DESC, file_id DESC
+      LIMIT $3
+      `,
+      [viewerIsAdmin, viewerUserId, limit],
+    );
+    return { items: result.rows };
+  }
+
+  async internalMediaFileDetail(params: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const fileId = requiredNumber(params.file_id, 'file_id is required');
+    const viewerUserId = requiredText(params.viewer_user_id, 'viewer_user_id is required');
+    const viewerIsAdmin = Boolean(params.viewer_is_admin);
+    const allowPublic = Boolean(params.allow_public);
+    const result = await this.databaseService.query(
+      `
+      SELECT file_id, owner_user_id, file_name, display_name, file_size, content_type,
+             content_kind, storage_path, public_path, thumbnail_path,
+             media_public_yn, original_created_at, created_at, updated_at
+      FROM wh_file
+      WHERE deleted_yn = 'N'
+        AND file_id = $1
+        AND ($2::boolean OR owner_user_id = $3 OR ($4::boolean AND media_public_yn = 'Y'))
+      LIMIT 1
+      `,
+      [fileId, viewerIsAdmin, viewerUserId, allowPublic],
+    );
+    return { item: result.rows[0] || null };
+  }
+
+  async internalMediaActiveIds(params: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const viewerUserId = requiredText(params.viewer_user_id, 'viewer_user_id is required');
+    const viewerIsAdmin = Boolean(params.viewer_is_admin);
+    const fileIds = arrayParam(params.file_ids)
+      .map((item) => Number(item))
+      .filter((item) => Number.isSafeInteger(item) && item > 0)
+      .slice(0, 500);
+    if (fileIds.length === 0) {
+      return { file_ids: [] };
+    }
+    const result = await this.databaseService.query<{ file_id: number }>(
+      `
+      SELECT file_id
+      FROM wh_file
+      WHERE deleted_yn = 'N'
+        AND content_kind IN ('IMAGE', 'VIDEO')
+        AND file_id = ANY($1::bigint[])
+        AND ($2::boolean OR owner_user_id = $3)
+      `,
+      [fileIds, viewerIsAdmin, viewerUserId],
+    );
+    return { file_ids: result.rows.map((row) => Number(row.file_id)) };
+  }
+
+  async internalMarkMediaPublic(params: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const ownerUserId = requiredText(params.owner_user_id, 'owner_user_id is required');
+    const fileIds = arrayParam(params.file_ids)
+      .map((item) => Number(item))
+      .filter((item) => Number.isSafeInteger(item) && item > 0)
+      .slice(0, 500);
+    if (fileIds.length === 0) {
+      return { updated_count: 0 };
+    }
+    const result = await this.databaseService.query<{ file_id: number }>(
+      `
+      UPDATE wh_file
+      SET media_public_yn = 'Y',
+          updated_at = CURRENT_TIMESTAMP,
+          updated_by = $1
+      WHERE owner_user_id = $1
+        AND file_id = ANY($2::bigint[])
+        AND deleted_yn = 'N'
+      RETURNING file_id
+      `,
+      [ownerUserId, fileIds],
+    );
+    return { updated_count: result.rowCount || 0, file_ids: result.rows.map((row) => Number(row.file_id)) };
+  }
+
+  async internalMediaFileStream(params: Record<string, unknown>): Promise<{
+    storagePath: string;
+    fileName: string;
+    contentType: string;
+    asAttachment: boolean;
+  }> {
+    const fileId = requiredNumber(params.file_id, 'file_id is required');
+    const viewerUserId = requiredText(params.viewer_user_id, 'viewer_user_id is required');
+    const viewerIsAdmin = Boolean(params.viewer_is_admin);
+    const allowPublic = Boolean(params.allow_public);
+    const kind = requiredText(params.file_kind, 'file_kind is required');
+    const result = await this.databaseService.query<{
+      file_name: string;
+      storage_path: string;
+      thumbnail_path: string | null;
+      content_type: string;
+    }>(
+      `
+      SELECT file_name, storage_path, thumbnail_path, content_type
+      FROM wh_file
+      WHERE deleted_yn = 'N'
+        AND file_id = $1
+        AND ($2::boolean OR owner_user_id = $3 OR ($4::boolean AND media_public_yn = 'Y'))
+      LIMIT 1
+      `,
+      [fileId, viewerIsAdmin, viewerUserId, allowPublic],
+    );
+    const item = result.rows[0];
+    if (!item) {
+      throw ApiException.badRequest('media file not found');
+    }
+    const rawPath = kind === 'thumbnail' ? item.thumbnail_path : item.storage_path;
+    const storagePath = safeExistingStoragePath(String(rawPath || ''));
+    if (!storagePath) {
+      throw ApiException.badRequest('media file path not found');
+    }
+    if (kind === 'thumbnail') {
+      return {
+        storagePath,
+        fileName: 'thumbnail.webp',
+        contentType: 'image/webp',
+        asAttachment: false,
+      };
+    }
+    if (kind === 'download') {
+      return {
+        storagePath,
+        fileName: String(item.file_name || 'download'),
+        contentType: 'application/octet-stream',
+        asAttachment: true,
+      };
+    }
+    if (kind === 'content') {
+      const contentType = safeInlineContentType(String(item.content_type || ''));
+      return {
+        storagePath,
+        fileName: String(item.file_name || 'download'),
+        contentType: contentType || 'application/octet-stream',
+        asAttachment: !contentType,
+      };
+    }
+    throw ApiException.badRequest('invalid file kind');
+  }
+
+  async internalRegisterYoutubeFile(params: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const ownerUserId = requiredText(params.owner_user_id, 'owner_user_id is required');
+    const fileName = normalizeFileName(requiredText(params.file_name, 'file_name is required'));
+    const fileSize = optionalNumber(params.file_size, 'file_size') || 0;
+    const contentType = optionalText(params.content_type) || 'video/mp4';
+    if (contentKindFor(contentType, fileName) !== 'VIDEO') {
+      throw ApiException.badRequest('youtube media must be a video file');
+    }
+    const storagePath = validateOwnedStoragePath(requiredText(params.storage_path, 'storage_path is required'), ownerUserId);
+    if (!existsSync(storagePath)) {
+      throw ApiException.badRequest('storage_path was not found');
+    }
+    const publicPath = optionalText(params.public_path);
+    const thumbnailPathText = optionalText(params.thumbnail_path);
+    const thumbnailPath = thumbnailPathText ? validateOwnedStoragePath(thumbnailPathText, ownerUserId) : null;
+    const originalCreatedAt = optionalTimestamp(params.original_created_at, 'original_created_at') || new Date().toISOString();
+    const contentSha256 = optionalText(params.content_sha256);
+    const mediaPublicYn = optionalBoolean(params.media_public_yn) ? 'Y' : 'N';
+    const result = await this.databaseService.query<{ file_id: number }>(
+      `
+      INSERT INTO wh_file (
+        owner_user_id, folder_id, file_name, display_name, file_size, content_type, content_kind,
+        storage_path, public_path, thumbnail_path, media_public_yn, original_created_at, content_sha256, created_by, updated_by
+      ) VALUES (
+        $1, NULL, $2, $2, $3, $4, 'VIDEO',
+        $5, $6, $7, $8, CAST($9 AS timestamp), $10, $1, $1
+      )
+      RETURNING file_id
+      `,
+      [ownerUserId, fileName, fileSize, contentType, storagePath, publicPath, thumbnailPath, mediaPublicYn, originalCreatedAt, contentSha256],
+    );
+    const fileId = result.rows[0]?.file_id || null;
+    await this.audit('FILE_REGISTER_YOUTUBE_INTERNAL', { userId: ownerUserId, roles: [] }, { target_type: 'FILE', target_id: fileId });
+    return { file_id: fileId };
+  }
+
+  async internalMediaReady(): Promise<Record<string, unknown>> {
+    await this.databaseService.ping();
+    return {
+      database: 'ready',
+      storage_root: storageRoot(),
+    };
   }
 
   async registerFile(params: Record<string, unknown>, viewer: Viewer): Promise<Record<string, unknown>> {
@@ -1437,6 +1638,23 @@ function contentKindFor(contentType: string, fileName: string): 'IMAGE' | 'VIDEO
   return 'OTHER';
 }
 
+function safeInlineContentType(value: string): string | null {
+  const contentType = String(value || '').split(';')[0].trim().toLowerCase();
+  const allowed = new Set([
+    'image/jpeg',
+    'image/png',
+    'image/gif',
+    'image/webp',
+    'image/bmp',
+    'video/mp4',
+    'video/webm',
+    'video/quicktime',
+    'video/x-matroska',
+    'video/x-msvideo',
+  ]);
+  return allowed.has(contentType) ? contentType : null;
+}
+
 function optionalTimestamp(value: unknown, fieldName: string): string | null {
   const text = optionalText(value);
   if (!text) {
@@ -1656,12 +1874,13 @@ async function createThumbnail(
   ownerUserId: string,
   originalCreatedAt: string,
   fileName: string,
+  seekSeconds: number | null = null,
 ): Promise<string | null> {
   if (contentKind === 'IMAGE') {
     return createImageThumbnail(storagePath, ownerUserId, originalCreatedAt, fileName);
   }
   if (contentKind === 'VIDEO') {
-    return createVideoThumbnail(storagePath, ownerUserId, originalCreatedAt, fileName);
+    return createVideoThumbnail(storagePath, ownerUserId, originalCreatedAt, fileName, seekSeconds ?? undefined);
   }
   return null;
 }

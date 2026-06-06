@@ -6,7 +6,7 @@ import { existsSync, readFileSync } from 'fs';
 import { isAbsolute, join, relative, resolve } from 'path';
 import { hasAnyWebhardPermission, isAdmin } from '../auth/permission.util';
 import { Public } from '../auth/public.decorator';
-import { authToken } from '../common/request-util';
+import { authToken, authTokenWithSource, isCrossSiteRequest } from '../common/request-util';
 import { storageRoot } from '../common/storage-path';
 import { DatabaseService } from '../database/database.service';
 import { AdminServiceClient } from '../integration/admin/admin-service.client';
@@ -399,7 +399,16 @@ export class WebController {
   }
 
   private async currentWebhardUser(request: Request, response: Response) {
-    const currentUser = await this.currentUser(request);
+    const { token, source } = authTokenWithSource(request);
+    if (!token) {
+      this.renderError(response, 401);
+      return null;
+    }
+    if (source === 'cookie' && isCrossSiteRequest(request)) {
+      this.renderError(response, 403, '인증 쿠키를 사용할 수 없는 요청입니다.');
+      return null;
+    }
+    const currentUser = await this.adminServiceClient.fetchCurrentUser(token);
     if (!currentUser) {
       this.renderError(response, 401);
       return null;

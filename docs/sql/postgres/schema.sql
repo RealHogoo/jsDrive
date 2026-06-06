@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS wh_file (
     storage_path  VARCHAR(1000) NOT NULL,
     public_path   VARCHAR(1000),
     thumbnail_path VARCHAR(1000),
+    media_public_yn CHAR(1) NOT NULL DEFAULT 'N',
     original_created_at TIMESTAMP,
     display_name  VARCHAR(255),
     memo          TEXT,
@@ -39,6 +40,7 @@ CREATE TABLE IF NOT EXISTS wh_file (
     updated_by    VARCHAR(100) NOT NULL,
     CONSTRAINT fk_wh_file_folder FOREIGN KEY (folder_id) REFERENCES wh_folder (folder_id),
     CONSTRAINT ck_wh_file_kind CHECK (content_kind IN ('IMAGE', 'VIDEO', 'DOCUMENT', 'OTHER')),
+    CONSTRAINT ck_wh_file_media_public CHECK (media_public_yn IN ('Y', 'N')),
     CONSTRAINT ck_wh_file_deleted CHECK (deleted_yn IN ('Y', 'N'))
 );
 

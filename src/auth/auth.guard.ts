@@ -11,7 +11,7 @@ import { authTokenWithSource, isCrossSiteRequest } from '../common/request-util'
 import { AdminServiceClient } from '../integration/admin/admin-service.client';
 import { IS_PUBLIC_KEY } from './public.decorator';
 import { REQUIRED_PERMISSION_KEY } from './require-permission.decorator';
-import { hasAnyWebhardPermission, hasPermission, isAdmin } from './permission.util';
+import { WEBHARD_SERVICE, hasAnyWebhardPermission, hasPermission, isAdmin } from './permission.util';
 
 @Injectable()
 export class AuthGuard implements CanActivate {
@@ -48,6 +48,11 @@ export class AuthGuard implements CanActivate {
     }
 
     request.auth = { accessToken, currentUser };
+    const serviceStatus = await this.adminServiceClient.fetchServiceStatus(accessToken, WEBHARD_SERVICE);
+    if (serviceStatus?.use_yn.toUpperCase() === 'N') {
+      throw new ForbiddenException('웹하드 서비스가 관리자에 의해 비활성화되었습니다.');
+    }
+
     const requiredPermission = this.reflector.getAllAndOverride<string>(REQUIRED_PERMISSION_KEY, [
       context.getHandler(),
       context.getClass(),
