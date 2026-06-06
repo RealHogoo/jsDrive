@@ -31,10 +31,18 @@ export class ApiExceptionFilter implements ExceptionFilter {
       return;
     }
 
+    if (!isProduction()) {
+      console.error(exception);
+    }
     response
       .status(HttpStatus.INTERNAL_SERVER_ERROR)
       .json(fail(ApiCode.SERVER_ERROR, 'server error'));
   }
+}
+
+function isProduction(): boolean {
+  const env = String(process.env.APP_ENV || process.env.NODE_ENV || '').trim().toLowerCase();
+  return env === 'prod' || env === 'production';
 }
 
 function codeForStatus(status: number): ApiCode {

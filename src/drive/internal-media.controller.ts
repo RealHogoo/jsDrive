@@ -1,5 +1,5 @@
 import { Body, Controller, ForbiddenException, Post, Req, Res } from '@nestjs/common';
-import { createReadStream } from 'fs';
+import { createReadStream, statSync } from 'fs';
 import { Request, Response } from 'express';
 import { Public } from '../auth/public.decorator';
 import { ok } from '../common/api-response';
@@ -56,14 +56,25 @@ export class InternalMediaController {
     ensureInternalAccess(request);
     const scopedBody = await this.scopedBody(request, body);
     const file = await this.driveService.internalMediaFileStream(scopedBody);
+    const stat = statSync(file.storagePath);
+    const range = parseByteRange(String(body.range || ''), stat.size);
     response.setHeader('X-Content-Type-Options', 'nosniff');
     response.setHeader('X-Webhard-File-Name', encodeURIComponent(file.fileName || 'download'));
+    response.setHeader('Accept-Ranges', 'bytes');
     if (file.asAttachment) {
       response.attachment(file.fileName || 'download');
     } else {
       response.setHeader('Content-Security-Policy', "default-src 'none'; media-src 'self'; img-src 'self'; style-src 'none'; script-src 'none'; sandbox");
     }
     response.type(file.contentType);
+    if (range) {
+      response.status(206);
+      response.setHeader('Content-Range', `bytes ${range.start}-${range.end}/${stat.size}`);
+      response.setHeader('Content-Length', String(range.end - range.start + 1));
+      createReadStream(file.storagePath, { start: range.start, end: range.end }).pipe(response);
+      return;
+    }
+    response.setHeader('Content-Length', String(stat.size));
     createReadStream(file.storagePath).pipe(response);
   }
 
@@ -116,6 +127,32 @@ export class InternalMediaController {
 function ensureInternalAccess(request: Request): void {
   ensureInternalToken(request);
   ensureInternalIpAllowed(request);
+}
+
+function parseByteRange(value: string, fileSize: number): { start: number; end: number } | null {
+  const match = /^bytes=(\d*)-(\d*)$/.exec(value.trim());
+  if (!match || fileSize <= 0) {
+    return null;
+  }
+  const startText = match[1] || '';
+  const endText = match[2] || '';
+  if (!startText && !endText) {
+    return null;
+  }
+  let start = startText ? Number(startText) : 0;
+  let end = endText ? Number(endText) : fileSize - 1;
+  if (!startText && endText) {
+    const suffixLength = Number(endText);
+    if (!Number.isFinite(suffixLength) || suffixLength <= 0) {
+      return null;
+    }
+    start = Math.max(fileSize - suffixLength, 0);
+    end = fileSize - 1;
+  }
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || start >= fileSize) {
+    return null;
+  }
+  return { start, end: Math.min(end, fileSize - 1) };
 }
 
 function ensureInternalToken(request: Request): void {
