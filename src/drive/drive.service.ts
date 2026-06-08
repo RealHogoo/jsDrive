@@ -722,7 +722,7 @@ export class DriveService {
     const limit = Math.min(Math.max(optionalNumber(params.limit, 'limit') || 500, 1), 1000);
     const result = await this.databaseService.query(
       `
-      SELECT file_id, owner_user_id, file_name, display_name, file_size, content_type,
+      SELECT file_id, owner_user_id, file_name, display_name, memo, tags, file_size, content_type,
              content_kind, thumbnail_path, media_public_yn, original_created_at, created_at, updated_at
       FROM wh_file
       WHERE deleted_yn = 'N'
@@ -743,7 +743,7 @@ export class DriveService {
     const allowPublic = Boolean(params.allow_public);
     const result = await this.databaseService.query(
       `
-      SELECT file_id, owner_user_id, file_name, display_name, file_size, content_type,
+      SELECT file_id, owner_user_id, file_name, display_name, memo, tags, file_size, content_type,
              content_kind, storage_path, public_path, thumbnail_path,
              media_public_yn, original_created_at, created_at, updated_at
       FROM wh_file
