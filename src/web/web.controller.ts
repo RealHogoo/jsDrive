@@ -14,6 +14,11 @@ import { VersionService } from '../version/version.service';
 import { DownloadJobService } from './download-job.service';
 
 const archiver = require('archiver') as (format: string, options: { zlib: { level: number } }) => any;
+const SHARE_DOWNLOAD_RATE_LIMIT = {
+  maxAttempts: Number(process.env.WEBHARD_SHARE_DOWNLOAD_RATE_LIMIT_MAX || 20),
+  windowMs: Number(process.env.WEBHARD_SHARE_DOWNLOAD_RATE_LIMIT_WINDOW_SECONDS || 300) * 1000,
+};
+const SHARE_DOWNLOAD_ATTEMPTS = new Map<string, { count: number; expiresAt: number }>();
 
 @Controller()
 export class WebController {
@@ -118,7 +123,11 @@ export class WebController {
 
   @Public()
   @Get('share/download/:token')
-  async shareDownload(@Param('token') token: string, @Res() response: Response): Promise<void> {
+  async shareDownload(@Param('token') token: string, @Req() request: Request, @Res() response: Response): Promise<void> {
+    if (isShareDownloadLimited(request, token)) {
+      this.renderError(response, 429, '공유 다운로드 요청이 너무 많습니다. 잠시 후 다시 시도하세요.');
+      return;
+    }
     const share = await this.findShare(token, '', { allowMissingPassword: true });
     if (share?.password_hash) {
       this.renderError(response, 403, '비밀번호가 필요한 공유 링크입니다.');
@@ -132,8 +141,13 @@ export class WebController {
   async shareDownloadWithPassword(
     @Param('token') token: string,
     @Body() body: Record<string, unknown> = {},
+    @Req() request: Request,
     @Res() response: Response,
   ): Promise<void> {
+    if (isShareDownloadLimited(request, token)) {
+      this.renderError(response, 429, '공유 다운로드 요청이 너무 많습니다. 잠시 후 다시 시도하세요.');
+      return;
+    }
     const share = await this.findShare(token, String(body.password || ''));
     await this.sendSharedItem(share, response);
   }
@@ -181,7 +195,7 @@ export class WebController {
       `,
       [share.share_id],
     );
-    response.download(storagePath, share.display_name || share.file_name || 'download');
+    response.download(storagePath, safeDownloadName(share.display_name || share.file_name || 'download'));
   }
 
   private async sendSharedFolder(
@@ -285,7 +299,7 @@ export class WebController {
     }
     const contentType = safeInlineContentType(file.content_type);
     if (!contentType) {
-      response.download(storagePath, file.file_name || 'download');
+      response.download(storagePath, safeDownloadName(file.file_name || 'download'));
       return;
     }
     response.setHeader('X-Content-Type-Options', 'nosniff');
@@ -307,8 +321,10 @@ export class WebController {
       this.renderError(response, 404, '썸네일을 찾을 수 없습니다.');
       return;
     }
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    response.setHeader('Cache-Control', 'private, max-age=86400');
     response.type('image/webp');
-    response.sendFile(thumbnailPath);
+    response.sendFile(thumbnailPath, { dotfiles: 'allow' });
   }
 
   @Public()
@@ -324,7 +340,7 @@ export class WebController {
       this.renderError(response, 404, '다운로드할 파일을 찾을 수 없습니다.');
       return;
     }
-    response.download(storagePath, file.file_name || 'download');
+    response.download(storagePath, safeDownloadName(file.file_name || 'download'));
   }
 
   @Public()
@@ -359,7 +375,7 @@ export class WebController {
       this.renderError(response, 404, '다운로드 파일을 찾을 수 없습니다.');
       return;
     }
-    response.download(job.zip_path, job.download_name || 'webhard.zip');
+    response.download(job.zip_path, safeDownloadName(job.download_name || 'webhard.zip'));
   }
 
   @Public()
@@ -675,4 +691,34 @@ function verifySharePassword(password: string, storedHash: string | null): boole
   const expected = Buffer.from(parts[2], 'hex');
   const actual = scryptSync(password || '', parts[1], expected.length);
   return expected.length === actual.length && timingSafeEqual(expected, actual);
+}
+
+function isShareDownloadLimited(request: Request, token: string): boolean {
+  if (SHARE_DOWNLOAD_RATE_LIMIT.maxAttempts <= 0 || SHARE_DOWNLOAD_RATE_LIMIT.windowMs <= 0) {
+    return false;
+  }
+  const now = Date.now();
+  if (SHARE_DOWNLOAD_ATTEMPTS.size > 1000) {
+    for (const [key, value] of SHARE_DOWNLOAD_ATTEMPTS.entries()) {
+      if (value.expiresAt <= now) {
+        SHARE_DOWNLOAD_ATTEMPTS.delete(key);
+      }
+    }
+  }
+  const key = `${clientIp(request)}:${String(token || '').slice(0, 64)}`;
+  const current = SHARE_DOWNLOAD_ATTEMPTS.get(key);
+  if (!current || current.expiresAt <= now) {
+    SHARE_DOWNLOAD_ATTEMPTS.set(key, { count: 1, expiresAt: now + SHARE_DOWNLOAD_RATE_LIMIT.windowMs });
+    return false;
+  }
+  current.count += 1;
+  return current.count > SHARE_DOWNLOAD_RATE_LIMIT.maxAttempts;
+}
+
+function clientIp(request: Request): string {
+  const forwarded = String(process.env.TRUST_FORWARDED_HEADERS || '').toLowerCase() === 'true'
+    ? String(request.header('x-forwarded-for') || '').split(',')[0].trim()
+    : '';
+  const raw = forwarded || request.ip || request.socket.remoteAddress || '';
+  return raw.startsWith('::ffff:') ? raw.slice('::ffff:'.length) : raw;
 }

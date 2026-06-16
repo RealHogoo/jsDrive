@@ -174,10 +174,12 @@ function ensureInternalIpAllowed(request: Request): void {
 function internalToken(): string {
   const configured = String(process.env.MEDIA_INTERNAL_API_TOKEN || process.env.WEBHARD_INTERNAL_API_TOKEN || '').trim();
   if (configured) {
+    if (isProductionEnv() && configured === 'dev-media-internal-token') {
+      return '';
+    }
     return configured;
   }
-  const appEnv = String(process.env.APP_ENV || process.env.NODE_ENV || '').trim().toLowerCase();
-  return appEnv === 'prod' || appEnv === 'production' ? '' : 'dev-media-internal-token';
+  return '';
 }
 
 function internalAllowedIpRules(): string[] {
@@ -185,11 +187,12 @@ function internalAllowedIpRules(): string[] {
   if (configured) {
     return configured.split(',').map((item) => item.trim()).filter(Boolean);
   }
+  return ['127.0.0.1', '::1'];
+}
+
+function isProductionEnv(): boolean {
   const appEnv = String(process.env.APP_ENV || process.env.NODE_ENV || '').trim().toLowerCase();
-  if (appEnv === 'prod' || appEnv === 'production') {
-    return [];
-  }
-  return ['127.0.0.1', '::1', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'];
+  return appEnv === 'prod' || appEnv === 'production';
 }
 
 function internalClientIp(request: Request): string {

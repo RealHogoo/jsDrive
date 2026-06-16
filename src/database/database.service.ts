@@ -33,6 +33,9 @@ function databaseConfig(): {
   if (isProductionEnv() && !process.env.WEBHARD_DB_PASSWORD) {
     throw new Error('WEBHARD_DB_PASSWORD is required in production');
   }
+  if (isProductionEnv() && process.env.WEBHARD_DB_USERNAME === 'postgres' && process.env.WEBHARD_DB_PASSWORD === 'postgres') {
+    throw new Error('WEBHARD_DB_PASSWORD must not use the development default in production');
+  }
   return {
     host: process.env.WEBHARD_DB_HOST || 'localhost',
     port: Number(process.env.WEBHARD_DB_PORT || 5432),

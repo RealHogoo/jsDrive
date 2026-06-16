@@ -723,7 +723,8 @@ export class DriveService {
     const result = await this.databaseService.query(
       `
       SELECT file_id, owner_user_id, file_name, display_name, memo, tags, file_size, content_type,
-             content_kind, thumbnail_path, media_public_yn, original_created_at, created_at, updated_at
+             content_kind, storage_path, public_path, thumbnail_path,
+             media_public_yn, original_created_at, created_at, updated_at
       FROM wh_file
       WHERE deleted_yn = 'N'
         AND content_kind IN ('IMAGE', 'VIDEO')
@@ -922,7 +923,7 @@ export class DriveService {
     const storagePath = validateOwnedStoragePath(requiredText(params.storage_path, 'storage_path is required'), viewer.userId);
     const fileSize = optionalNumber(params.file_size, 'file_size') || 0;
     const contentType = optionalText(params.content_type) || 'application/octet-stream';
-    const contentKind = contentKindFor(contentType, fileName);
+    const contentKind = validateAllowedFileType(contentType, fileName);
     const originalCreatedAt = optionalTimestamp(params.original_created_at, 'original_created_at');
     const contentSha256 = optionalText(params.content_sha256);
 
@@ -959,10 +960,7 @@ export class DriveService {
       const originalCreatedAt = optionalTimestamp(params.original_created_at, 'original_created_at') || new Date().toISOString();
       const contentType = file.mimetype || 'application/octet-stream';
       const fileName = normalizeFileName(file.originalname);
-      const contentKind = contentKindFor(contentType, fileName);
-      if (contentKind === 'OTHER') {
-        throw ApiException.badRequest('unsupported file type. image, video, and document files can be uploaded');
-      }
+      const contentKind = validateAllowedFileType(contentType, fileName);
       const contentSha256 = await fileHash(file);
       const detectedOriginalCreatedAt = await detectOriginalCreatedAt(file, originalCreatedAt, contentKind);
       const duplicateInfoPromise = this.duplicateInfo(viewer.userId, contentSha256);
@@ -1035,11 +1033,7 @@ export class DriveService {
         const file = uploadFiles[index];
         const fileName = normalizeFileName(file.originalname);
         const contentType = file.mimetype || 'application/octet-stream';
-        const contentKind = contentKindFor(contentType, fileName);
-        if (contentKind === 'OTHER') {
-          await removeTempUploadedFile(file);
-          throw ApiException.badRequest('unsupported file type. image, video, and document files can be uploaded');
-        }
+        const contentKind = validateAllowedFileType(contentType, fileName);
         const requestedOriginalCreatedAt = optionalTimestamp(originalCreatedAtList[index], 'original_created_at')
           || new Date().toISOString();
         const originalCreatedAt = await detectOriginalCreatedAt(file, requestedOriginalCreatedAt, contentKind);
@@ -1134,6 +1128,11 @@ export class DriveService {
     const dateColumn = sortBasisDateColumn(sortBasis);
     const upperBound = nextWeekStart(cursorDate);
     const previewItemLimit = Math.min(Math.max(optionalNumber(params.preview_item_limit, 'preview_item_limit') || 20, 1), 50);
+    const weekContentKindFilter = contentKind ? 'AND content_kind = $3' : '';
+    const weekLimitParam = contentKind ? '$4' : '$3';
+    const weekParams = contentKind
+      ? [viewer.userId, upperBound, contentKind, safeWeeks]
+      : [viewer.userId, upperBound, safeWeeks];
 
     const weekResult = await this.databaseService.query<{ week_start: string; item_count: string }>(
       `
@@ -1143,12 +1142,12 @@ export class DriveService {
       WHERE owner_user_id = $1
         AND deleted_yn = 'N'
         AND ${dateColumn} < CAST($2 AS timestamp)
-        AND ($3::varchar IS NULL OR content_kind = $3)
+        ${weekContentKindFilter}
       GROUP BY date_trunc('week', ${dateColumn})::date
       ORDER BY week_start DESC
-      LIMIT $4
+      LIMIT ${weekLimitParam}
       `,
-      [viewer.userId, upperBound, contentKind, safeWeeks],
+      weekParams,
     );
     if (weekResult.rows.length === 0) {
       return {
@@ -1164,6 +1163,11 @@ export class DriveService {
     const oldestWeekStart = dateOnlyToUtc(weekResult.rows[weekResult.rows.length - 1].week_start);
     const newestWeekEnd = new Date(newestWeekStart);
     newestWeekEnd.setUTCDate(newestWeekEnd.getUTCDate() + 7);
+    const itemContentKindFilter = contentKind ? 'AND content_kind = $4' : '';
+    const itemLimitParam = contentKind ? '$5' : '$4';
+    const itemParams = contentKind
+      ? [viewer.userId, oldestWeekStart.toISOString(), newestWeekEnd.toISOString(), contentKind, previewItemLimit]
+      : [viewer.userId, oldestWeekStart.toISOString(), newestWeekEnd.toISOString(), previewItemLimit];
 
     const itemResult = await this.databaseService.query(
       `
@@ -1179,15 +1183,15 @@ export class DriveService {
           AND deleted_yn = 'N'
           AND ${dateColumn} >= CAST($2 AS timestamp)
           AND ${dateColumn} < CAST($3 AS timestamp)
-          AND ($4::varchar IS NULL OR content_kind = $4)
+          ${itemContentKindFilter}
       )
       SELECT file_id, folder_id, file_name, display_name, file_size, content_type, content_kind,
              public_path, thumbnail_path, original_created_at, created_at
       FROM ranked
-      WHERE rn <= $5
+      WHERE rn <= ${itemLimitParam}
       ORDER BY ${dateColumn} DESC, file_id DESC
       `,
-      [viewer.userId, oldestWeekStart.toISOString(), newestWeekEnd.toISOString(), contentKind, previewItemLimit],
+      itemParams,
     );
 
     return {
@@ -1215,6 +1219,12 @@ export class DriveService {
     const start = startOfWeek(new Date(`${weekStart}T00:00:00.000Z`));
     const end = new Date(start);
     end.setUTCDate(end.getUTCDate() + 7);
+    const contentKindFilter = contentKind ? 'AND content_kind = $4' : '';
+    const limitParam = contentKind ? '$5' : '$4';
+    const offsetParam = contentKind ? '$6' : '$5';
+    const queryParams = contentKind
+      ? [viewer.userId, start.toISOString(), end.toISOString(), contentKind, limit + 1, offset]
+      : [viewer.userId, start.toISOString(), end.toISOString(), limit + 1, offset];
 
     const result = await this.databaseService.query(
       `
@@ -1225,11 +1235,11 @@ export class DriveService {
         AND deleted_yn = 'N'
         AND ${dateColumn} >= CAST($2 AS timestamp)
         AND ${dateColumn} < CAST($3 AS timestamp)
-        AND ($4::varchar IS NULL OR content_kind = $4)
+        ${contentKindFilter}
       ORDER BY ${dateColumn} DESC, file_id DESC
-      LIMIT $5 OFFSET $6
+      LIMIT ${limitParam} OFFSET ${offsetParam}
       `,
-      [viewer.userId, start.toISOString(), end.toISOString(), contentKind, limit + 1, offset],
+      queryParams,
     );
     const rows = result.rows.slice(0, limit);
 
@@ -1251,6 +1261,7 @@ export class DriveService {
     return {
       max_file_bytes: limits.maxFileBytes,
       max_total_bytes: limits.maxTotalBytes,
+      allowed_extensions: allowedUploadExtensions(),
     };
   }
 
@@ -1604,6 +1615,65 @@ function validateUploadSizes(files: Express.Multer.File[]): void {
   }
 }
 
+const ALLOWED_UPLOAD_TYPES: Array<{
+  kind: 'IMAGE' | 'VIDEO' | 'DOCUMENT';
+  extensions: Set<string>;
+  mimeTypes: Set<string>;
+}> = [
+  { kind: 'IMAGE', extensions: new Set(['jpg', 'jpeg']), mimeTypes: new Set(['image/jpeg']) },
+  { kind: 'IMAGE', extensions: new Set(['png']), mimeTypes: new Set(['image/png']) },
+  { kind: 'IMAGE', extensions: new Set(['gif']), mimeTypes: new Set(['image/gif']) },
+  { kind: 'IMAGE', extensions: new Set(['webp']), mimeTypes: new Set(['image/webp']) },
+  { kind: 'IMAGE', extensions: new Set(['bmp']), mimeTypes: new Set(['image/bmp', 'image/x-ms-bmp']) },
+  { kind: 'IMAGE', extensions: new Set(['heic']), mimeTypes: new Set(['image/heic', 'image/heif']) },
+  { kind: 'VIDEO', extensions: new Set(['mp4']), mimeTypes: new Set(['video/mp4']) },
+  { kind: 'VIDEO', extensions: new Set(['mov']), mimeTypes: new Set(['video/quicktime']) },
+  { kind: 'VIDEO', extensions: new Set(['m4v']), mimeTypes: new Set(['video/x-m4v', 'video/mp4']) },
+  { kind: 'VIDEO', extensions: new Set(['avi']), mimeTypes: new Set(['video/x-msvideo']) },
+  { kind: 'VIDEO', extensions: new Set(['mkv']), mimeTypes: new Set(['video/x-matroska']) },
+  { kind: 'VIDEO', extensions: new Set(['webm']), mimeTypes: new Set(['video/webm']) },
+  { kind: 'DOCUMENT', extensions: new Set(['pdf']), mimeTypes: new Set(['application/pdf']) },
+  { kind: 'DOCUMENT', extensions: new Set(['txt']), mimeTypes: new Set(['text/plain']) },
+  { kind: 'DOCUMENT', extensions: new Set(['md']), mimeTypes: new Set(['text/markdown', 'text/plain']) },
+  { kind: 'DOCUMENT', extensions: new Set(['csv']), mimeTypes: new Set(['text/csv', 'application/csv', 'application/vnd.ms-excel']) },
+  { kind: 'DOCUMENT', extensions: new Set(['rtf']), mimeTypes: new Set(['application/rtf', 'text/rtf']) },
+  { kind: 'DOCUMENT', extensions: new Set(['doc']), mimeTypes: new Set(['application/msword']) },
+  { kind: 'DOCUMENT', extensions: new Set(['docx']), mimeTypes: new Set(['application/vnd.openxmlformats-officedocument.wordprocessingml.document']) },
+  { kind: 'DOCUMENT', extensions: new Set(['xls']), mimeTypes: new Set(['application/vnd.ms-excel']) },
+  { kind: 'DOCUMENT', extensions: new Set(['xlsx']), mimeTypes: new Set(['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']) },
+  { kind: 'DOCUMENT', extensions: new Set(['ods']), mimeTypes: new Set(['application/vnd.oasis.opendocument.spreadsheet']) },
+  { kind: 'DOCUMENT', extensions: new Set(['ppt']), mimeTypes: new Set(['application/vnd.ms-powerpoint']) },
+  { kind: 'DOCUMENT', extensions: new Set(['pptx']), mimeTypes: new Set(['application/vnd.openxmlformats-officedocument.presentationml.presentation']) },
+  { kind: 'DOCUMENT', extensions: new Set(['hwp']), mimeTypes: new Set(['application/x-hwp', 'application/haansofthwp', 'application/vnd.hancom.hwp']) },
+  { kind: 'DOCUMENT', extensions: new Set(['hwpx']), mimeTypes: new Set(['application/vnd.hancom.hwpx', 'application/haansofthwpx']) },
+];
+
+function allowedUploadExtensions(): string[] {
+  const extensions = new Set<string>();
+  for (const rule of ALLOWED_UPLOAD_TYPES) {
+    for (const extension of rule.extensions) {
+      extensions.add(extension);
+    }
+  }
+  return Array.from(extensions).sort();
+}
+
+function fileExtension(fileName: string): string {
+  return extname(String(fileName || '')).replace(/^\./, '').toLowerCase();
+}
+
+function normalizedContentType(contentType: string): string {
+  return String(contentType || '').split(';')[0].trim().toLowerCase();
+}
+
+function validateAllowedFileType(contentType: string, fileName: string): 'IMAGE' | 'VIDEO' | 'DOCUMENT' {
+  const contentKind = contentKindFor(contentType, fileName);
+  if (contentKind === 'OTHER') {
+    throw ApiException.badRequest('unsupported file type. allowed file extensions and MIME types must match');
+  }
+  return contentKind;
+}
+
 function formatBytes(bytes: number): string {
   if (bytes >= 1024 * 1024 * 1024) {
     return `${Math.floor(bytes / 1024 / 1024 / 1024)}GB`;
@@ -1612,30 +1682,16 @@ function formatBytes(bytes: number): string {
 }
 
 function contentKindFor(contentType: string, fileName: string): 'IMAGE' | 'VIDEO' | 'DOCUMENT' | 'OTHER' {
-  const lowerType = contentType.toLowerCase();
-  const lowerName = fileName.toLowerCase();
-  if (lowerType.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|bmp|heic)$/.test(lowerName)) {
-    return 'IMAGE';
+  const extension = fileExtension(fileName);
+  if (!extension) {
+    return 'OTHER';
   }
-  if (lowerType.startsWith('video/') || /\.(mp4|mov|m4v|avi|mkv|webm)$/.test(lowerName)) {
-    return 'VIDEO';
+  const contentTypeText = normalizedContentType(contentType);
+  const rule = ALLOWED_UPLOAD_TYPES.find((item) => item.extensions.has(extension));
+  if (!rule || !rule.mimeTypes.has(contentTypeText)) {
+    return 'OTHER';
   }
-  if (
-    lowerType === 'application/pdf'
-    || lowerType.startsWith('text/')
-    || lowerType.includes('msword')
-    || lowerType.includes('ms-excel')
-    || lowerType.includes('ms-powerpoint')
-    || lowerType.includes('officedocument')
-    || lowerType.includes('spreadsheet')
-    || lowerType.includes('presentation')
-    || lowerType.includes('wordprocessing')
-    || lowerType.includes('haansoft')
-    || /\.(pdf|xls|xlsx|csv|ods|doc|docx|ppt|pptx|txt|md|rtf|hwp|hwpx)$/.test(lowerName)
-  ) {
-    return 'DOCUMENT';
-  }
-  return 'OTHER';
+  return rule.kind;
 }
 
 function safeInlineContentType(value: string): string | null {

@@ -346,6 +346,34 @@ label {
   display: block;
 }
 
+.video-thumb {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  background: #111827;
+}
+
+.video-thumb .preview-media {
+  height: 100%;
+}
+
+.play-badge {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.72);
+  color: #fff;
+  font-size: 13px;
+  line-height: 1;
+  pointer-events: none;
+}
+
 .missing-media {
   display: flex;
   align-items: center;

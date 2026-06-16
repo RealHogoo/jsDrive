@@ -113,10 +113,13 @@
 
   function mediaElement(item, publicPath) {
     if (item.content_kind === "VIDEO") {
-      var videoPoster = item.thumbnail_path && item.file_id
-        ? " poster=\"/file/thumbnail/" + encodeURIComponent(item.file_id) + "\""
+      var thumbnailPath = item.thumbnail_path && item.file_id
+        ? "/file/thumbnail/" + encodeURIComponent(item.file_id)
         : "";
-      return "<video class=\"preview-media\" src=\"" + escapeAttr(publicPath) + "\" controls preload=\"metadata\"" + videoPoster + "></video>";
+      var media = thumbnailPath
+        ? "<img class=\"preview-media\" src=\"" + escapeAttr(thumbnailPath) + "\" alt=\"\" loading=\"lazy\" decoding=\"async\">"
+        : "<div class=\"preview-media missing-media\">동영상</div>";
+      return "<div class=\"video-thumb\">" + media + "<span class=\"play-badge\" aria-hidden=\"true\">▶</span></div>";
     }
     if (item.content_kind === "IMAGE") {
       var thumbnailPath = item.thumbnail_path && item.file_id
