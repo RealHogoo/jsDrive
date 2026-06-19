@@ -7,7 +7,7 @@
 
   function loginUrl() {
     var returnUrl = global.location.href;
-    var base = global.WEBHARD_ADMIN_LOGIN_URL || "/service-login-page.do";
+    var base = (document.body && document.body.getAttribute("data-webhard-admin-login-url")) || "/service-login-page.do";
     return base + "?service_nm=" + encodeURIComponent("Webhard Service")
       + "&return_url=" + encodeURIComponent(returnUrl);
   }

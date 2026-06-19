@@ -2,9 +2,9 @@ import { Body, Controller, Get, Param, Post, Req, Res } from '@nestjs/common';
 import { scryptSync, timingSafeEqual } from 'crypto';
 import { once } from 'events';
 import { Request, Response } from 'express';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync, statSync } from 'fs';
 import { isAbsolute, join, relative, resolve } from 'path';
-import { hasAnyWebhardPermission, isAdmin } from '../auth/permission.util';
+import { WEBHARD_SERVICE, hasAnyWebhardPermission, isAdmin } from '../auth/permission.util';
 import { Public } from '../auth/public.decorator';
 import { authToken, authTokenWithSource, isCrossSiteRequest } from '../common/request-util';
 import { storageRoot } from '../common/storage-path';
@@ -115,15 +115,38 @@ export class WebController {
 
   @Public()
   @Get('s/:token')
-  async sharePage(@Param('token') token: string, @Res() response: Response): Promise<void> {
-    const bootstrap = `<script>window.WEBHARD_SHARE_TOKEN=${JSON.stringify(token || '')};</script>`;
-    const html = pageHtml('share.html').replace('</head>', `${bootstrap}</head>`);
+  async sharePage(@Param('token') token: string, @Req() request: Request, @Res() response: Response): Promise<void> {
+    const { token: accessToken, source } = authTokenWithSource(request);
+    const currentUser = accessToken ? await this.adminServiceClient.fetchCurrentUser(accessToken) : null;
+    if (!currentUser) {
+      response.redirect(this.loginUrl(request));
+      return;
+    }
+    if (source === 'cookie' && isCrossSiteRequest(request)) {
+      this.renderError(response, 403, '?몄쬆 荑좏궎瑜??ъ슜?????녿뒗 ?붿껌?낅땲??');
+      return;
+    }
+    if (await this.isWebhardServiceDisabled(accessToken)) {
+      this.renderError(response, 403, '\uc6f9\ud558\ub4dc \uc11c\ube44\uc2a4\uac00 \uad00\ub9ac\uc790\uc5d0 \uc758\ud574 \ube44\ud65c\uc131\ud654\ub418\uc5c8\uc2b5\ub2c8\ub2e4.');
+      return;
+    }
+    if (!isAdmin(currentUser.roles) && !hasAnyWebhardPermission(currentUser.service_permissions)) {
+      this.renderError(response, 403);
+      return;
+    }
+    const html = injectBodyDataAttributes(pageHtml('share.html'), {
+      webhardShareToken: token || '',
+    });
     response.type('html').send(html);
   }
 
   @Public()
   @Get('share/download/:token')
   async shareDownload(@Param('token') token: string, @Req() request: Request, @Res() response: Response): Promise<void> {
+    const currentUser = await this.currentWebhardUser(request, response);
+    if (!currentUser) {
+      return;
+    }
     if (isShareDownloadLimited(request, token)) {
       this.renderError(response, 429, '공유 다운로드 요청이 너무 많습니다. 잠시 후 다시 시도하세요.');
       return;
@@ -144,6 +167,10 @@ export class WebController {
     @Req() request: Request,
     @Res() response: Response,
   ): Promise<void> {
+    const currentUser = await this.currentWebhardUser(request, response);
+    if (!currentUser) {
+      return;
+    }
     if (isShareDownloadLimited(request, token)) {
       this.renderError(response, 429, '공유 다운로드 요청이 너무 많습니다. 잠시 후 다시 시도하세요.');
       return;
@@ -322,7 +349,11 @@ export class WebController {
       return;
     }
     response.setHeader('X-Content-Type-Options', 'nosniff');
-    response.setHeader('Cache-Control', 'private, max-age=86400');
+    setFileCacheHeaders(request, response, thumbnailPath, { privateCache: true, maxAgeSeconds: 86400 });
+    if (response.statusCode === 304) {
+      response.end();
+      return;
+    }
     response.type('image/webp');
     response.sendFile(thumbnailPath, { dotfiles: 'allow' });
   }
@@ -389,9 +420,14 @@ export class WebController {
     response: Response,
     pageName: 'index.html' | 'upload.html' | 'dashboard.html' | 'preview.html' | 'preview-detail.html' | 'file-detail.html' | 'trash.html' | 'search.html' | 'download-jobs.html' | 'indexing.html' | 'shares.html' | 'audit.html',
   ): Promise<void> {
-    const currentUser = await this.currentUser(request);
+    const accessToken = authToken(request);
+    const currentUser = accessToken ? await this.adminServiceClient.fetchCurrentUser(accessToken) : null;
     if (!currentUser) {
       response.redirect(this.loginUrl(request));
+      return;
+    }
+    if (await this.isWebhardServiceDisabled(accessToken)) {
+      this.renderError(response, 403, '\uc6f9\ud558\ub4dc \uc11c\ube44\uc2a4\uac00 \uad00\ub9ac\uc790\uc5d0 \uc758\ud574 \ube44\ud65c\uc131\ud654\ub418\uc5c8\uc2b5\ub2c8\ub2e4.');
       return;
     }
     if (!isAdmin(currentUser.roles) && !hasAnyWebhardPermission(currentUser.service_permissions)) {
@@ -404,14 +440,6 @@ export class WebController {
       injectVersionBadge(html, this.versionService.version()),
       `${adminPublicBaseUrl(request)}/service-login-page.do`,
     ));
-  }
-
-  private async currentUser(request: Request) {
-    const token = authToken(request);
-    if (!token) {
-      return null;
-    }
-    return this.adminServiceClient.fetchCurrentUser(token);
   }
 
   private async currentWebhardUser(request: Request, response: Response) {
@@ -429,6 +457,10 @@ export class WebController {
       this.renderError(response, 401);
       return null;
     }
+    if (await this.isWebhardServiceDisabled(token)) {
+      this.renderError(response, 403, '\uc6f9\ud558\ub4dc \uc11c\ube44\uc2a4\uac00 \uad00\ub9ac\uc790\uc5d0 \uc758\ud574 \ube44\ud65c\uc131\ud654\ub418\uc5c8\uc2b5\ub2c8\ub2e4.');
+      return null;
+    }
     if (!isAdmin(currentUser.roles) && !hasAnyWebhardPermission(currentUser.service_permissions)) {
       this.renderError(response, 403);
       return null;
@@ -436,10 +468,16 @@ export class WebController {
     return currentUser;
   }
 
+  private async isWebhardServiceDisabled(accessToken: string): Promise<boolean> {
+    const serviceStatus = await this.adminServiceClient.fetchServiceStatus(accessToken, WEBHARD_SERVICE);
+    return serviceStatus?.use_yn.toUpperCase() === 'N';
+  }
+
   private renderError(response: Response, status: number, message?: string): void {
-    const bootstrap = `<script>window.WEBHARD_ERROR_CODE=${JSON.stringify(String(status))};`
-      + `window.WEBHARD_ERROR_MESSAGE=${JSON.stringify(message || '')};</script>`;
-    const html = pageHtml('error.html').replace('</head>', `${bootstrap}</head>`);
+    const html = injectBodyDataAttributes(pageHtml('error.html'), {
+      errorCode: String(status),
+      errorMessage: message || '',
+    });
     response.status(status).type('html').send(html);
   }
 
@@ -616,6 +654,22 @@ const SAFE_INLINE_CONTENT_TYPES = new Set([
   'video/webm',
 ]);
 
+function setFileCacheHeaders(
+  request: Request,
+  response: Response,
+  path: string,
+  options: { privateCache: boolean; maxAgeSeconds: number },
+): void {
+  const stat = statSync(path);
+  const etag = `"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}"`;
+  response.setHeader('Cache-Control', `${options.privateCache ? 'private' : 'public'}, max-age=${options.maxAgeSeconds}`);
+  response.setHeader('ETag', etag);
+  response.setHeader('Last-Modified', stat.mtime.toUTCString());
+  if (request.header('if-none-match') === etag) {
+    response.status(304);
+  }
+}
+
 function injectVersionBadge(html: string, version: { service: string; revision: string }): string {
   const badge = `<div class="build-version" aria-label="Git revision">${escapeHtml(version.service)} ${escapeHtml(version.revision)}</div>`;
   if (html.includes('</body>')) {
@@ -625,11 +679,23 @@ function injectVersionBadge(html: string, version: { service: string; revision: 
 }
 
 function injectWebhardBootstrap(html: string, adminLoginUrl: string): string {
-  const bootstrap = `<script>window.WEBHARD_ADMIN_LOGIN_URL=${JSON.stringify(adminLoginUrl)};</script>`;
-  if (html.includes('</head>')) {
-    return html.replace('</head>', `${bootstrap}</head>`);
+  return injectBodyDataAttributes(html, {
+    webhardAdminLoginUrl: adminLoginUrl,
+  });
+}
+
+function injectBodyDataAttributes(html: string, attributes: Record<string, string>): string {
+  const rendered = Object.entries(attributes)
+    .map(([key, value]) => ` data-${kebabCase(key)}="${escapeHtml(value)}"`)
+    .join('');
+  if (!rendered) {
+    return html;
   }
-  return `${bootstrap}${html}`;
+  return html.replace(/<body([^>]*)>/i, `<body$1${rendered}>`);
+}
+
+function kebabCase(value: string): string {
+  return value.replace(/[A-Z]/g, (item) => `-${item.toLowerCase()}`);
 }
 
 function escapeHtml(value: string): string {

@@ -1,0 +1,8 @@
+.git
+.runtime
+node_modules
+dist
+storage
+logs
+*.log
+npm-debug.log*

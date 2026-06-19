@@ -1,4 +1,4 @@
-import { describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { scryptSync } from 'crypto';
 import { EventEmitter } from 'events';
 import { mkdtempSync, rmSync, writeFileSync } from 'fs';
@@ -15,6 +15,20 @@ const archiverMock = jest.requireMock('archiver') as jest.Mock;
 
 describe('WebController share download security', () => {
   const token = '0123456789abcdef0123456789abcdef0123456789abcdef';
+  let previousStorageRoot: string | undefined;
+
+  beforeEach(() => {
+    previousStorageRoot = process.env.WEBHARD_STORAGE_ROOT;
+    process.env.WEBHARD_STORAGE_ROOT = tmpdir();
+  });
+
+  afterEach(() => {
+    if (previousStorageRoot === undefined) {
+      delete process.env.WEBHARD_STORAGE_ROOT;
+    } else {
+      process.env.WEBHARD_STORAGE_ROOT = previousStorageRoot;
+    }
+  });
 
   it('does not accept share passwords from GET query parameters', async () => {
     const query = jest.fn<MockQuery>().mockResolvedValueOnce({
@@ -24,7 +38,7 @@ describe('WebController share download security', () => {
     const controller = controllerWith(query);
     const response = mockResponse();
 
-    await controller.shareDownload(token, response as any);
+    await controller.shareDownload(token, requestWithBearerToken() as any, response as any);
 
     expect(response.status).toHaveBeenCalledWith(403);
     expect(response.download).not.toHaveBeenCalled();
@@ -45,7 +59,7 @@ describe('WebController share download security', () => {
       const controller = controllerWith(query);
       const response = mockResponse();
 
-      await controller.shareDownloadWithPassword(token, { password: 'secret' }, response as any);
+      await controller.shareDownloadWithPassword(token, { password: 'secret' }, requestWithBearerToken() as any, response as any);
 
       expect(response.download).toHaveBeenCalledWith(filePath, 'secret.txt');
       expect(query).toHaveBeenNthCalledWith(2, expect.stringContaining('UPDATE wh_share'), [1]);
@@ -85,7 +99,7 @@ describe('WebController share download security', () => {
       const controller = controllerWith(query);
       const response = mockResponse();
 
-      await controller.shareDownload(token, response as any);
+      await controller.shareDownload(token, requestWithBearerToken() as any, response as any);
 
       expect(response.attachment).toHaveBeenCalledWith('문서.zip');
       expect(archive.file).toHaveBeenCalledWith(filePath, { name: '문서/001-folder-file.txt' });
@@ -112,11 +126,46 @@ describe('WebController share download security', () => {
     expect(response.status).toHaveBeenCalledWith(403);
     expect(query).not.toHaveBeenCalled();
   });
+
+  it('renders error page when webhard service is disabled', async () => {
+    const query = jest.fn<MockQuery>();
+    const controller = controllerWith(query, {
+      fetchCurrentUser: jest.fn<() => Promise<Record<string, unknown>>>().mockResolvedValue({
+        user_id: 'USER1',
+        roles: ['ROLE_ADMIN'],
+        service_permissions: {},
+      }),
+      fetchServiceStatus: jest.fn<() => Promise<Record<string, unknown>>>().mockResolvedValue({
+        service_cd: 'webhard-service',
+        use_yn: 'N',
+      }),
+    });
+    const response = mockResponse();
+
+    await controller.preview(requestWithBearerToken() as any, response as any);
+
+    expect(response.status).toHaveBeenCalledWith(403);
+    expect(response.type).toHaveBeenCalledWith('html');
+    expect(response.send).toHaveBeenCalledWith(expect.stringContaining('data-error-message'));
+    expect(query).not.toHaveBeenCalled();
+  });
 });
 
 function controllerWith(query: jest.MockedFunction<MockQuery>, adminServiceClient: Record<string, unknown> = {}): WebController {
+  const adminClient = {
+    fetchCurrentUser: jest.fn<() => Promise<Record<string, unknown>>>().mockResolvedValue({
+      user_id: 'ADMIN',
+      roles: ['ROLE_ADMIN'],
+      service_permissions: {},
+    }),
+    fetchServiceStatus: jest.fn<() => Promise<Record<string, unknown>>>().mockResolvedValue({
+      service_cd: 'webhard-service',
+      use_yn: 'Y',
+    }),
+    ...adminServiceClient,
+  };
   return new WebController(
-    adminServiceClient as any,
+    adminClient as any,
     { query: query as unknown as DatabaseService['query'] } as DatabaseService,
     {} as any,
     {} as any,
@@ -127,14 +176,18 @@ function mockResponse() {
   const response: any = Object.assign(new EventEmitter(), {
     attachment: jest.fn(),
     download: jest.fn(),
+    redirect: jest.fn(),
     send: jest.fn(),
+    sendFile: jest.fn(),
     status: jest.fn(),
     type: jest.fn(),
   });
   response.attachment.mockReturnValue(response);
+  response.redirect.mockReturnValue(response);
   response.status.mockReturnValue(response);
   response.type.mockReturnValue(response);
   response.send.mockReturnValue(response);
+  response.sendFile.mockReturnValue(response);
   return response;
 }
 
@@ -159,6 +212,8 @@ function requestWithBearerToken() {
       }
       return '';
     }),
+    ip: '127.0.0.1',
+    socket: { remoteAddress: '127.0.0.1' },
   };
 }
 

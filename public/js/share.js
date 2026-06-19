@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  var token = window.WEBHARD_SHARE_TOKEN || "";
+  var token = (document.body && document.body.getAttribute("data-webhard-share-token")) || "";
   var form = document.getElementById("shareAccessForm");
   var password = document.getElementById("sharePassword");
   var message = document.getElementById("shareMessage");

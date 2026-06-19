@@ -10,14 +10,22 @@ type MockQuery = (sql: string, params?: unknown[]) => Promise<any>;
 
 describe('DriveService management features', () => {
   let tempDir: string;
+  let previousStorageRoot: string | undefined;
   let indexingService: Pick<IndexingService, 'ensureNotRunning'>;
 
   beforeEach(() => {
+    previousStorageRoot = process.env.WEBHARD_STORAGE_ROOT;
     tempDir = mkdtempSync(join(tmpdir(), 'webhard-drive-test-'));
+    process.env.WEBHARD_STORAGE_ROOT = tempDir;
     indexingService = { ensureNotRunning: jest.fn<() => Promise<void>>().mockResolvedValue() };
   });
 
   afterEach(() => {
+    if (previousStorageRoot === undefined) {
+      delete process.env.WEBHARD_STORAGE_ROOT;
+    } else {
+      process.env.WEBHARD_STORAGE_ROOT = previousStorageRoot;
+    }
     rmSync(tempDir, { recursive: true, force: true });
   });
 

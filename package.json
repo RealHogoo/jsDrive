@@ -23,6 +23,10 @@
     "rxjs": "^7.8.1",
     "sharp": "^0.34.5"
   },
+  "overrides": {
+    "js-yaml": "4.2.0",
+    "multer": "2.2.0"
+  },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
     "@nestjs/cli": "^11.0.21",

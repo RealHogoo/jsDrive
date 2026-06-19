@@ -22,6 +22,7 @@ export class AdminServiceClient {
   private readonly adminServiceBaseUrl = trimTrailingSlash(
     process.env.ADMIN_SERVICE_BASE_URL || 'http://localhost:8081',
   );
+  private readonly internalApiToken = internalApiToken();
   private readonly cache = new Map<string, CachedCurrentUser>();
 
   async fetchCurrentUser(accessToken: string): Promise<CurrentUser | null> {
@@ -72,22 +73,21 @@ export class AdminServiceClient {
     return cloneCurrentUser(currentUser);
   }
 
-  async fetchServiceStatus(accessToken: string, serviceCode: string): Promise<ServiceStatus | null> {
-    const token = accessToken.trim();
+  async fetchServiceStatus(_accessToken: string | null | undefined, serviceCode: string): Promise<ServiceStatus | null> {
     const targetServiceCode = normalizeCode(serviceCode);
-    if (!token || !targetServiceCode) {
+    if (!targetServiceCode || !this.internalApiToken) {
       return null;
     }
 
     let response: Response;
     try {
-      response = await fetch(`${this.adminServiceBaseUrl}/health/service/list.json`, {
+      response = await fetch(`${this.adminServiceBaseUrl}/internal/service/use-status.json`, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
+          'X-Internal-Api-Token': this.internalApiToken,
         },
-        body: '{}',
+        body: JSON.stringify({ service_cd: targetServiceCode }),
       });
     } catch (_exception) {
       return null;
@@ -100,22 +100,17 @@ export class AdminServiceClient {
       ok?: boolean;
       data?: unknown;
     };
-    if (body.ok !== true || !Array.isArray(body.data)) {
+    if (body.ok !== true || !body.data || typeof body.data !== 'object') {
       return null;
     }
-    for (const item of body.data) {
-      if (!item || typeof item !== 'object') {
-        continue;
-      }
-      const row = item as Record<string, unknown>;
-      if (normalizeCode(String(row.service_cd || '')) === targetServiceCode) {
-        return {
-          service_cd: String(row.service_cd || ''),
-          use_yn: String(row.use_yn || ''),
-        };
-      }
+    const row = body.data as Record<string, unknown>;
+    if (normalizeCode(String(row.service_cd || '')) !== targetServiceCode) {
+      return null;
     }
-    return null;
+    return {
+      service_cd: String(row.service_cd || ''),
+      use_yn: String(row.use_yn || ''),
+    };
   }
 }
 
@@ -143,6 +138,14 @@ function normalizePermissions(raw: unknown): Record<string, string[]> {
 
 function normalizeCode(value: string): string {
   return value.trim().replace(/[- ]/g, '_').toUpperCase();
+}
+
+function internalApiToken(): string {
+  const configured = String(process.env.ADMIN_INTERNAL_API_TOKEN || process.env.MEDIA_INTERNAL_API_TOKEN || '').trim();
+  if (configured) {
+    return configured;
+  }
+  return String(process.env.APP_ENV || 'dev').toLowerCase() === 'prod' ? '' : 'dev-media-internal-token';
 }
 
 function cloneCurrentUser(currentUser: CurrentUser): CurrentUser {

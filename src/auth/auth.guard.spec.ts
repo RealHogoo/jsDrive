@@ -39,6 +39,10 @@ function guardWithUser(currentUser: Record<string, unknown>, requiredPermission?
       user_id: 'USER1',
       ...currentUser,
     }),
+    fetchServiceStatus: jest.fn<() => Promise<Record<string, unknown>>>().mockResolvedValue({
+      service_cd: 'webhard-service',
+      use_yn: 'Y',
+    }),
   };
   return new AuthGuard(reflector as any, adminServiceClient as any);
 }
