@@ -3,7 +3,7 @@ import { scryptSync, timingSafeEqual } from 'crypto';
 import { once } from 'events';
 import { Request, Response } from 'express';
 import { existsSync, readFileSync, statSync } from 'fs';
-import { isAbsolute, join, relative, resolve } from 'path';
+import { isAbsolute, join, relative, resolve, sep } from 'path';
 import { WEBHARD_SERVICE, hasAnyWebhardPermission, isAdmin } from '../auth/permission.util';
 import { Public } from '../auth/public.decorator';
 import { authToken, authTokenWithSource, isCrossSiteRequest } from '../common/request-util';
@@ -222,7 +222,15 @@ export class WebController {
       `,
       [share.share_id],
     );
-    response.download(storagePath, safeDownloadName(share.display_name || share.file_name || 'download'));
+    const fileName = safeDownloadName(share.display_name || share.file_name || 'download');
+    if (trySendAccelRedirect(response, storagePath, {
+      fileName,
+      contentType: 'application/octet-stream',
+      attachment: true,
+    })) {
+      return;
+    }
+    response.download(storagePath, fileName);
   }
 
   private async sendSharedFolder(
@@ -326,11 +334,26 @@ export class WebController {
     }
     const contentType = safeInlineContentType(file.content_type);
     if (!contentType) {
-      response.download(storagePath, safeDownloadName(file.file_name || 'download'));
+      const fileName = safeDownloadName(file.file_name || 'download');
+      if (trySendAccelRedirect(response, storagePath, {
+        fileName,
+        contentType: 'application/octet-stream',
+        attachment: true,
+      })) {
+        return;
+      }
+      response.download(storagePath, fileName);
       return;
     }
     response.setHeader('X-Content-Type-Options', 'nosniff');
     response.setHeader('Content-Security-Policy', "default-src 'none'; media-src 'self'; img-src 'self'; style-src 'none'; script-src 'none'; sandbox");
+    if (trySendAccelRedirect(response, storagePath, {
+      fileName: safeDownloadName(file.file_name || 'content'),
+      contentType,
+      attachment: false,
+    })) {
+      return;
+    }
     response.type(contentType);
     response.sendFile(storagePath);
   }
@@ -354,6 +377,13 @@ export class WebController {
       response.end();
       return;
     }
+    if (trySendAccelRedirect(response, thumbnailPath, {
+      fileName: 'thumbnail.webp',
+      contentType: 'image/webp',
+      attachment: false,
+    })) {
+      return;
+    }
     response.type('image/webp');
     response.sendFile(thumbnailPath, { dotfiles: 'allow' });
   }
@@ -371,7 +401,15 @@ export class WebController {
       this.renderError(response, 404, '다운로드할 파일을 찾을 수 없습니다.');
       return;
     }
-    response.download(storagePath, safeDownloadName(file.file_name || 'download'));
+    const fileName = safeDownloadName(file.file_name || 'download');
+    if (trySendAccelRedirect(response, storagePath, {
+      fileName,
+      contentType: 'application/octet-stream',
+      attachment: true,
+    })) {
+      return;
+    }
+    response.download(storagePath, fileName);
   }
 
   @Public()
@@ -406,7 +444,15 @@ export class WebController {
       this.renderError(response, 404, '다운로드 파일을 찾을 수 없습니다.');
       return;
     }
-    response.download(job.zip_path, safeDownloadName(job.download_name || 'webhard.zip'));
+    const fileName = safeDownloadName(job.download_name || 'webhard.zip');
+    if (trySendAccelRedirect(response, job.zip_path, {
+      fileName,
+      contentType: 'application/zip',
+      attachment: true,
+    })) {
+      return;
+    }
+    response.download(job.zip_path, fileName);
   }
 
   @Public()
@@ -744,6 +790,37 @@ function safeZipSegment(value: string): string {
     .replace(/^\.+$/, '_')
     .trim()
     .slice(0, 180) || 'item';
+}
+
+function trySendAccelRedirect(
+  response: Response,
+  storagePath: string,
+  options: { fileName: string; contentType: string; attachment: boolean },
+): boolean {
+  const prefix = trimTrailingSlash(process.env.WEBHARD_ACCEL_REDIRECT_PREFIX || '');
+  if (!prefix) {
+    return false;
+  }
+  const root = resolvedStorageRoot();
+  const target = resolve(storagePath);
+  const pathFromRoot = relative(root, target);
+  if (pathFromRoot === '' || pathFromRoot === '..' || pathFromRoot.startsWith(`..${sep}`) || isAbsolute(pathFromRoot)) {
+    return false;
+  }
+  const stat = statSync(target);
+  const redirectPath = `${prefix}/${pathFromRoot.split(sep).map(encodeURIComponent).join('/')}`;
+  response.setHeader('X-Accel-Redirect', redirectPath);
+  response.setHeader('Content-Type', options.contentType || 'application/octet-stream');
+  response.setHeader('Content-Length', String(stat.size));
+  response.setHeader('Content-Disposition', contentDisposition(options.fileName, options.attachment));
+  response.end();
+  return true;
+}
+
+function contentDisposition(fileName: string, attachment: boolean): string {
+  const type = attachment ? 'attachment' : 'inline';
+  const fallback = safeDownloadName(fileName).replace(/[^\x20-\x7E]/g, '_').replace(/"/g, '_');
+  return `${type}; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(fileName)}`;
 }
 
 function verifySharePassword(password: string, storedHash: string | null): boolean {

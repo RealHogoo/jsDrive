@@ -963,47 +963,16 @@ export class DriveService {
       const contentKind = validateAllowedFileType(contentType, fileName);
       const contentSha256 = await fileHash(file);
       const detectedOriginalCreatedAt = await detectOriginalCreatedAt(file, originalCreatedAt, contentKind);
-      const duplicateInfoPromise = this.duplicateInfo(viewer.userId, contentSha256);
-
-      const stored = await saveUploadedFile(file, detectedOriginalCreatedAt, viewer.userId, fileName);
-      const thumbnailPath = await createThumbnail(contentKind, stored.storagePath, viewer.userId, detectedOriginalCreatedAt, stored.storedName);
-      const duplicateInfo = await duplicateInfoPromise;
-      const result = await this.databaseService.query<{ file_id: number }>(
-        `
-        INSERT INTO wh_file (
-          owner_user_id, folder_id, file_name, file_size, content_type, content_kind,
-          storage_path, public_path, thumbnail_path, original_created_at, content_sha256, created_by, updated_by
-        ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9, CAST($10 AS timestamp), $11, $1, $1
-        )
-        RETURNING file_id
-        `,
-        [
-          viewer.userId,
-          folderId,
-          fileName,
-          file.size,
-          contentType,
-          contentKind,
-          stored.storagePath,
-          stored.publicPath,
-          thumbnailPath,
-          detectedOriginalCreatedAt,
-          contentSha256,
-        ],
-      );
-      const uploaded = {
-        file_id: result.rows[0]?.file_id,
-        public_path: stored.publicPath,
-        original_created_at: detectedOriginalCreatedAt,
-        content_kind: contentKind,
-        thumbnail_path: thumbnailPath,
-        content_sha256: contentSha256,
-        duplicate_count: duplicateInfo.count,
-        duplicate_files: duplicateInfo.items,
-      };
-      await this.audit('FILE_UPLOAD', viewer, { target_type: 'FILE', target_id: uploaded.file_id as number | null });
-      return uploaded;
+      return await this.persistUploadedFile({
+        file,
+        folderId,
+        fileName,
+        contentType,
+        contentKind,
+        originalCreatedAt: detectedOriginalCreatedAt,
+        contentSha256,
+        viewer,
+      });
     } catch (exception) {
       if (file) {
         await removeTempUploadedFile(file);
@@ -1027,10 +996,9 @@ export class DriveService {
     await this.ensureOwnedFolder(folderId, viewer);
     const originalCreatedAtList = arrayParam(params.original_created_at);
 
-    const items = [];
+    const items: Array<Record<string, unknown>> = [];
     try {
-      for (let index = 0; index < uploadFiles.length; index++) {
-        const file = uploadFiles[index];
+      const processed = await mapWithConcurrency(uploadFiles, uploadProcessingConcurrency(), async (file, index) => {
         const fileName = normalizeFileName(file.originalname);
         const contentType = file.mimetype || 'application/octet-stream';
         const contentKind = validateAllowedFileType(contentType, fileName);
@@ -1038,53 +1006,83 @@ export class DriveService {
           || new Date().toISOString();
         const originalCreatedAt = await detectOriginalCreatedAt(file, requestedOriginalCreatedAt, contentKind);
         const contentSha256 = await fileHash(file);
-        const duplicateInfoPromise = this.duplicateInfo(viewer.userId, contentSha256);
-        const stored = await saveUploadedFile(file, originalCreatedAt, viewer.userId, fileName);
-        const thumbnailPath = await createThumbnail(contentKind, stored.storagePath, viewer.userId, originalCreatedAt, stored.storedName);
-        const duplicateInfo = await duplicateInfoPromise;
-        const result = await this.databaseService.query<{ file_id: number }>(
-          `
-          INSERT INTO wh_file (
-            owner_user_id, folder_id, file_name, file_size, content_type, content_kind,
-            storage_path, public_path, thumbnail_path, original_created_at, content_sha256, created_by, updated_by
-          ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9, CAST($10 AS timestamp), $11, $1, $1
-          )
-          RETURNING file_id
-          `,
-          [
-            viewer.userId,
-            folderId,
-            fileName,
-            file.size,
-            contentType,
-            contentKind,
-            stored.storagePath,
-            stored.publicPath,
-            thumbnailPath,
-            originalCreatedAt,
-            contentSha256,
-          ],
-        );
-        items.push({
-          file_id: result.rows[0]?.file_id,
-          file_name: fileName,
-          public_path: stored.publicPath,
-          original_created_at: originalCreatedAt,
-          content_kind: contentKind,
-          thumbnail_path: thumbnailPath,
-          content_sha256: contentSha256,
-          duplicate_count: duplicateInfo.count,
-          duplicate_files: duplicateInfo.items,
+        return this.persistUploadedFile({
+          file,
+          folderId,
+          fileName,
+          contentType,
+          contentKind,
+          originalCreatedAt,
+          contentSha256,
+          viewer,
         });
-        await this.audit('FILE_UPLOAD', viewer, { target_type: 'FILE', target_id: result.rows[0]?.file_id || null });
-      }
+      });
+      items.push(...processed);
     } catch (exception) {
       await Promise.all(uploadFiles.map((file) => removeTempUploadedFile(file)));
       throw exception;
     }
 
     return { items, count: items.length };
+  }
+
+  private async persistUploadedFile(options: {
+    file: Express.Multer.File;
+    folderId: number | null;
+    fileName: string;
+    contentType: string;
+    contentKind: string;
+    originalCreatedAt: string;
+    contentSha256: string;
+    viewer: Viewer;
+  }): Promise<Record<string, unknown>> {
+    const duplicateInfoPromise = this.duplicateInfo(options.viewer.userId, options.contentSha256);
+    const stored = await saveUploadedFile(options.file, options.originalCreatedAt, options.viewer.userId, options.fileName);
+    const thumbnailPath = await createThumbnail(
+      options.contentKind,
+      stored.storagePath,
+      options.viewer.userId,
+      options.originalCreatedAt,
+      stored.storedName,
+    );
+    const duplicateInfo = await duplicateInfoPromise;
+    const result = await this.databaseService.query<{ file_id: number }>(
+      `
+      INSERT INTO wh_file (
+        owner_user_id, folder_id, file_name, file_size, content_type, content_kind,
+        storage_path, public_path, thumbnail_path, original_created_at, content_sha256, created_by, updated_by
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, CAST($10 AS timestamp), $11, $1, $1
+      )
+      RETURNING file_id
+      `,
+      [
+        options.viewer.userId,
+        options.folderId,
+        options.fileName,
+        options.file.size,
+        options.contentType,
+        options.contentKind,
+        stored.storagePath,
+        stored.publicPath,
+        thumbnailPath,
+        options.originalCreatedAt,
+        options.contentSha256,
+      ],
+    );
+    const uploaded = {
+      file_id: result.rows[0]?.file_id,
+      file_name: options.fileName,
+      public_path: stored.publicPath,
+      original_created_at: options.originalCreatedAt,
+      content_kind: options.contentKind,
+      thumbnail_path: thumbnailPath,
+      content_sha256: options.contentSha256,
+      duplicate_count: duplicateInfo.count,
+      duplicate_files: duplicateInfo.items,
+    };
+    await this.audit('FILE_UPLOAD', options.viewer, { target_type: 'FILE', target_id: uploaded.file_id as number | null });
+    return uploaded;
   }
 
   async previewList(params: Record<string, unknown>, viewer: Viewer): Promise<Record<string, unknown>> {
@@ -1558,6 +1556,32 @@ function hashPassword(password: string): string {
 
 function isAdminViewer(viewer: Viewer): boolean {
   return viewer.roles.some((role) => role === 'ROLE_ADMIN' || role === 'ROLE_SUPER_ADMIN');
+}
+
+function uploadProcessingConcurrency(): number {
+  const parsed = Number(process.env.WEBHARD_UPLOAD_PROCESS_CONCURRENCY || 2);
+  if (!Number.isFinite(parsed)) {
+    return 2;
+  }
+  return Math.min(Math.max(Math.floor(parsed), 1), 4);
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(Math.max(concurrency, 1), items.length);
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      results[currentIndex] = await mapper(items[currentIndex], currentIndex);
+    }
+  }));
+  return results;
 }
 
 function optionalText(value: unknown): string | null {
