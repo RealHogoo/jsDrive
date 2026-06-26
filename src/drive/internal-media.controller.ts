@@ -54,7 +54,7 @@ export class InternalMediaController {
   @Post('file-stream.json')
   async fileStream(@Body() body: Record<string, unknown> = {}, @Req() request: Request, @Res() response: Response) {
     ensureInternalAccess(request);
-    const scopedBody = await this.scopedBody(request, body);
+    const scopedBody = await this.scopedBody(request, body, { allowPublicWithoutUserToken: true });
     const file = await this.driveService.internalMediaFileStream(scopedBody);
     const stat = statSync(file.storagePath);
     const range = parseByteRange(String(body.range || ''), stat.size);
@@ -87,8 +87,19 @@ export class InternalMediaController {
   private async scopedBody(
     request: Request,
     body: Record<string, unknown>,
-    options: { requireWrite?: boolean; requireAdmin?: boolean } = {},
+    options: { requireWrite?: boolean; requireAdmin?: boolean; allowPublicWithoutUserToken?: boolean } = {},
   ): Promise<Record<string, unknown>> {
+    if (options.allowPublicWithoutUserToken && Boolean(body.allow_public) && !String(request.header('x-user-access-token') || '').trim()) {
+      const viewerUserId = String(body.viewer_user_id || body.owner_user_id || '').trim();
+      return {
+        ...body,
+        viewer_user_id: viewerUserId,
+        owner_user_id: viewerUserId,
+        viewer_is_admin: false,
+        allow_public: true,
+      };
+    }
+
     const currentUser = await this.currentAdminUser(request);
     if (options.requireAdmin && !isAdmin(currentUser.roles)) {
       throw new ForbiddenException('admin permission is required');
