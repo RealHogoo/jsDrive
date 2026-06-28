@@ -3,8 +3,8 @@ export interface UploadLimits {
   maxTotalBytes: number;
 }
 
-const DEFAULT_MAX_FILE_MB = 2048;
-const DEFAULT_MAX_TOTAL_MB = 4096;
+const DEFAULT_MAX_FILE_MB = 10240;
+const DEFAULT_MAX_TOTAL_MB = 10240;
 
 export function uploadLimits(): UploadLimits {
   return {
