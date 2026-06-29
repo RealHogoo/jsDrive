@@ -611,6 +611,7 @@ export class DriveService {
 
   async searchFiles(params: Record<string, unknown>, viewer: Viewer): Promise<Record<string, unknown>> {
     const keyword = optionalText(params.keyword);
+    const keywordTokens = searchTokens(keyword);
     const contentKind = optionalContentKind(params.content_kind);
     const sortBasis = normalizeSortBasis(params.sort_basis);
     const dateColumn = sortBasisDateColumn(sortBasis);
@@ -632,6 +633,20 @@ export class DriveService {
           OR lower(file_name) LIKE '%' || lower($2) || '%'
           OR lower(COALESCE(display_name, '')) LIKE '%' || lower($2) || '%'
           OR lower(COALESCE(tags, '')) LIKE '%' || lower($2) || '%'
+          OR lower(COALESCE(memo, '')) LIKE '%' || lower($2) || '%'
+          OR (
+            cardinality($8::text[]) > 0
+            AND NOT EXISTS (
+              SELECT 1
+              FROM unnest($8::text[]) AS term(value)
+              WHERE NOT (
+                lower(file_name) LIKE '%' || lower(term.value) || '%'
+                OR lower(COALESCE(display_name, '')) LIKE '%' || lower(term.value) || '%'
+                OR lower(COALESCE(tags, '')) LIKE '%' || lower(term.value) || '%'
+                OR lower(COALESCE(memo, '')) LIKE '%' || lower(term.value) || '%'
+              )
+            )
+          )
         )
         AND ($3::varchar IS NULL OR content_kind = $3)
         AND ($4::timestamp IS NULL OR ${dateColumn} >= $4::timestamp)
@@ -639,7 +654,7 @@ export class DriveService {
       ORDER BY ${dateColumn} DESC, file_id DESC
       LIMIT $6 OFFSET $7
       `,
-      [viewer.userId, keyword, contentKind, dateFrom, dateToExclusive, limit + 1, offset],
+      [viewer.userId, keyword, contentKind, dateFrom, dateToExclusive, limit + 1, offset, keywordTokens],
     );
     const rows = result.rows.slice(0, limit);
     return {
@@ -873,7 +888,7 @@ export class DriveService {
 
   async internalRegisterYoutubeFile(params: Record<string, unknown>): Promise<Record<string, unknown>> {
     const ownerUserId = requiredText(params.owner_user_id, 'owner_user_id is required');
-    const fileName = normalizeFileName(requiredText(params.file_name, 'file_name is required'));
+    const fileName = await this.youtubeFileNameWithInternalNumber(normalizeFileName(requiredText(params.file_name, 'file_name is required')));
     const fileSize = optionalNumber(params.file_size, 'file_size') || 0;
     const contentType = optionalText(params.content_type) || 'video/mp4';
     if (contentKindFor(contentType, fileName) !== 'VIDEO') {
@@ -904,7 +919,28 @@ export class DriveService {
     );
     const fileId = result.rows[0]?.file_id || null;
     await this.audit('FILE_REGISTER_YOUTUBE_INTERNAL', { userId: ownerUserId, roles: [] }, { target_type: 'FILE', target_id: fileId });
-    return { file_id: fileId };
+    return { file_id: fileId, file_name: fileName, karaoke_number: karaokeNumberFromText(fileName) };
+  }
+
+  private async youtubeFileNameWithInternalNumber(fileName: string): Promise<string> {
+    if (karaokeNumberFromText(fileName)) {
+      return fileName;
+    }
+    await this.databaseService.query(
+      "CREATE SEQUENCE IF NOT EXISTS wh_youtube_karaoke_number_seq START WITH 9900001",
+      [],
+    );
+    const result = await this.databaseService.query<{ next_number: string }>(
+      "SELECT nextval('wh_youtube_karaoke_number_seq')::text AS next_number",
+      [],
+    );
+    const nextNumber = String(result.rows[0]?.next_number || '').trim();
+    if (!nextNumber) {
+      throw ApiException.badRequest('youtube karaoke number could not be generated');
+    }
+    const extension = extname(fileName);
+    const baseName = extension ? fileName.slice(0, -extension.length).trim() : fileName;
+    return `KY.${nextNumber} ${baseName || 'youtube-video'}${extension || '.mp4'}`;
   }
 
   async internalMediaReady(): Promise<Record<string, unknown>> {
@@ -1503,6 +1539,34 @@ function normalizeTags(value: unknown): string | null {
     .filter(Boolean)
     .slice(0, 30)
     .join(', ');
+}
+
+function searchTokens(value: string | null): string[] {
+  return uniqueTextValues(
+    String(value || '')
+      .split(/[\s\[\]\(\)\{\}_.+\-~!@#$%^&=;:'"\\/|,]+/u)
+      .filter((token) => token.length >= 2 || /^\d+$/.test(token)),
+  ).slice(0, 8);
+}
+
+function uniqueTextValues(values: string[]): string[] {
+  const result: string[] = [];
+  for (const value of values) {
+    const text = String(value || '').trim();
+    if (text && !result.includes(text)) {
+      result.push(text);
+    }
+  }
+  return result;
+}
+
+function karaokeNumberFromText(value: string): string {
+  const match = String(value || '').match(/\bKY[.\-_ ]?(\d{4,7})\b/i);
+  if (match) {
+    return `KY.${match[1]}`;
+  }
+  const numeric = String(value || '').match(/(?:^|[^\d])(\d{6,7})(?=[^\d]|$)/);
+  return numeric ? `KY.${numeric[1]}` : '';
 }
 
 async function fileHash(file: Express.Multer.File): Promise<string> {
