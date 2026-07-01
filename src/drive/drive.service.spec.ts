@@ -80,6 +80,31 @@ describe('DriveService management features', () => {
     expect(query.mock.calls[0][0]).not.toContain('storage_path');
   });
 
+  it('includes public video files in search results for non-owner song lookup', async () => {
+    const query = jest.fn<MockQuery>()
+      .mockResolvedValueOnce({
+        rows: [{ file_id: 238, owner_user_id: 'ADMIN', file_name: 'KY.9900001 Always Awake.mp4', content_kind: 'VIDEO' }],
+        rowCount: 1,
+      });
+    const service = serviceWith(query, indexingService);
+
+    await expect(service.searchFiles({ keyword: 'Always Awake', content_kind: 'VIDEO' }, { userId: 'USER1', roles: [] })).resolves.toMatchObject({
+      items: [{ file_id: 238, file_name: 'KY.9900001 Always Awake.mp4' }],
+      has_more: false,
+    });
+    expect(query).toHaveBeenCalledWith(expect.stringContaining("content_kind = 'VIDEO' AND media_public_yn = 'Y'"), [
+      'USER1',
+      'Always Awake',
+      'VIDEO',
+      null,
+      null,
+      21,
+      0,
+      ['Always', 'Awake'],
+      false,
+    ]);
+  });
+
   it('requires share targets to belong to the viewer', async () => {
     const query = jest.fn<MockQuery>()
       .mockResolvedValueOnce({ rows: [], rowCount: 0 });

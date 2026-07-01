@@ -613,6 +613,7 @@ export class DriveService {
     const keyword = optionalText(params.keyword);
     const keywordTokens = searchTokens(keyword);
     const contentKind = optionalContentKind(params.content_kind);
+    const includeAllUsers = isAdminViewer(viewer);
     const sortBasis = normalizeSortBasis(params.sort_basis);
     const dateColumn = sortBasisDateColumn(sortBasis);
     const dateFrom = optionalDateOnly(params.date_from);
@@ -626,7 +627,7 @@ export class DriveService {
       SELECT file_id, folder_id, file_name, display_name, file_size, content_type, content_kind,
              public_path, thumbnail_path, original_created_at, created_at
       FROM wh_file
-      WHERE owner_user_id = $1
+      WHERE ($9::boolean OR owner_user_id = $1 OR (content_kind = 'VIDEO' AND media_public_yn = 'Y'))
         AND deleted_yn = 'N'
         AND (
           $2::varchar IS NULL
@@ -654,7 +655,7 @@ export class DriveService {
       ORDER BY ${dateColumn} DESC, file_id DESC
       LIMIT $6 OFFSET $7
       `,
-      [viewer.userId, keyword, contentKind, dateFrom, dateToExclusive, limit + 1, offset, keywordTokens],
+      [viewer.userId, keyword, contentKind, dateFrom, dateToExclusive, limit + 1, offset, keywordTokens, includeAllUsers],
     );
     const rows = result.rows.slice(0, limit);
     return {
