@@ -542,7 +542,7 @@ export class WebController {
       SELECT file_name, storage_path, thumbnail_path, content_type
       FROM wh_file
       WHERE file_id = $1
-        AND ($3::boolean OR owner_user_id = $2)
+        AND ($3::boolean OR owner_user_id = $2 OR owner_user_id = 'ADMIN')
         AND deleted_yn = 'N'
       `,
       [parsedFileId, ownerUserId, includeAllUsers],

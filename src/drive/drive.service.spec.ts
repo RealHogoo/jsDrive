@@ -80,7 +80,7 @@ describe('DriveService management features', () => {
     expect(query.mock.calls[0][0]).not.toContain('storage_path');
   });
 
-  it('includes public video files in search results for non-owner song lookup', async () => {
+  it('includes admin-owned files in search results for non-owner lookup', async () => {
     const query = jest.fn<MockQuery>()
       .mockResolvedValueOnce({
         rows: [{ file_id: 238, owner_user_id: 'ADMIN', file_name: 'KY.9900001 Always Awake.mp4', content_kind: 'VIDEO' }],
@@ -92,7 +92,7 @@ describe('DriveService management features', () => {
       items: [{ file_id: 238, file_name: 'KY.9900001 Always Awake.mp4' }],
       has_more: false,
     });
-    expect(query).toHaveBeenCalledWith(expect.stringContaining("content_kind = 'VIDEO' AND media_public_yn = 'Y'"), [
+    expect(query).toHaveBeenCalledWith(expect.stringContaining("owner_user_id = 'ADMIN'"), [
       'USER1',
       'Always Awake',
       'VIDEO',

@@ -127,6 +127,38 @@ describe('WebController share download security', () => {
     expect(query).not.toHaveBeenCalled();
   });
 
+  it('allows users with webhard access to download admin-owned files', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'webhard-admin-file-test-'));
+    const filePath = join(tempDir, 'song.mp4');
+    writeFileSync(filePath, 'download');
+    try {
+      const query = jest.fn<MockQuery>().mockResolvedValueOnce({
+        rows: [{
+          file_name: 'song.mp4',
+          storage_path: filePath,
+          thumbnail_path: null,
+          content_type: 'application/octet-stream',
+        }],
+        rowCount: 1,
+      });
+      const controller = controllerWith(query, {
+        fetchCurrentUser: jest.fn<() => Promise<Record<string, unknown>>>().mockResolvedValue({
+          user_id: 'USER1',
+          roles: [],
+          service_permissions: { WEBHARD_SERVICE: ['READ'] },
+        }),
+      });
+      const response = mockResponse();
+
+      await controller.fileDownload('238', requestWithBearerToken() as any, response as any);
+
+      expect(query).toHaveBeenCalledWith(expect.stringContaining("owner_user_id = 'ADMIN'"), [238, 'USER1', false]);
+      expect(response.download).toHaveBeenCalledWith(filePath, 'song.mp4');
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('renders error page when webhard service is disabled', async () => {
     const query = jest.fn<MockQuery>();
     const controller = controllerWith(query, {

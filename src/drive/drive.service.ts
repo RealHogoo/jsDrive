@@ -193,7 +193,7 @@ export class DriveService {
              content_sha256, public_path, thumbnail_path, original_created_at, created_at, updated_at
       FROM wh_file
       WHERE file_id = $1
-        AND owner_user_id = $2
+        AND (owner_user_id = $2 OR owner_user_id = 'ADMIN')
         AND deleted_yn = 'N'
       `,
       [fileId, viewer.userId],
@@ -627,7 +627,7 @@ export class DriveService {
       SELECT file_id, folder_id, file_name, display_name, file_size, content_type, content_kind,
              public_path, thumbnail_path, original_created_at, created_at
       FROM wh_file
-      WHERE ($9::boolean OR owner_user_id = $1 OR (content_kind = 'VIDEO' AND media_public_yn = 'Y'))
+      WHERE ($9::boolean OR owner_user_id = $1 OR owner_user_id = 'ADMIN')
         AND deleted_yn = 'N'
         AND (
           $2::varchar IS NULL
