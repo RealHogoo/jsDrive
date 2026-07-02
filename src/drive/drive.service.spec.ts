@@ -221,6 +221,67 @@ describe('DriveService management features', () => {
       'ADMIN',
     ]);
   });
+
+  it('keeps text search token fallback and numeric keywords in search queries', async () => {
+    const query = jest.fn<MockQuery>()
+      .mockResolvedValueOnce({
+        rows: [
+          { file_id: 9900001, file_name: '9900001 서울 여행.mp4', display_name: '서울 여행' },
+        ],
+        rowCount: 1,
+      });
+    const service = serviceWith(query, indexingService);
+
+    await expect(service.searchFiles({
+      keyword: '9900001 서울',
+      content_kind: 'VIDEO',
+      limit: 10,
+    }, { userId: 'ADMIN', roles: [] })).resolves.toMatchObject({
+      items: [{ file_id: 9900001 }],
+      has_more: false,
+      sort_basis: 'ORIGINAL_CREATED',
+    });
+
+    expect(query).toHaveBeenCalledWith(expect.stringContaining('cardinality($8::text[]) > 0'), [
+      'ADMIN',
+      '9900001 서울',
+      'VIDEO',
+      null,
+      null,
+      11,
+      0,
+      ['9900001', '서울'],
+      false,
+    ]);
+  });
+
+  it('uses the requested media date basis for search date filters', async () => {
+    const query = jest.fn<MockQuery>()
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    const service = serviceWith(query, indexingService);
+
+    await service.searchFiles({
+      keyword: '가족 영상',
+      sort_basis: 'ORIGINAL_CREATED',
+      date_from: '2026-07-01',
+      date_to: '2026-07-02',
+    }, { userId: 'ADMIN', roles: [] });
+
+    const sql = query.mock.calls[0][0];
+    expect(sql).toContain('original_created_at >= $4::timestamp');
+    expect(sql).toContain('original_created_at < $5::timestamp');
+    expect(query.mock.calls[0][1]).toEqual([
+      'ADMIN',
+      '가족 영상',
+      null,
+      '2026-07-01',
+      '2026-07-03',
+      21,
+      0,
+      ['가족', '영상'],
+      false,
+    ]);
+  });
 });
 
 function serviceWith(query: jest.MockedFunction<MockQuery>, indexingService: Pick<IndexingService, 'ensureNotRunning'>): DriveService {
