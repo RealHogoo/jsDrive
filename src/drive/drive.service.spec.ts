@@ -282,6 +282,60 @@ describe('DriveService management features', () => {
       false,
     ]);
   });
+
+  it('uses uploaded date basis when explicitly requested', async () => {
+    const query = jest.fn<MockQuery>()
+      .mockResolvedValueOnce({ rows: [{ file_id: 12, file_name: 'clip.mp4' }], rowCount: 1 });
+    const service = serviceWith(query, indexingService);
+
+    await expect(service.searchFiles({
+      keyword: 'clip',
+      sort_basis: 'UPLOADED',
+      date_from: '2026-07-03',
+      date_to: '2026-07-03',
+      limit: 5,
+    }, { userId: 'USER1', roles: [] })).resolves.toMatchObject({
+      items: [{ file_id: 12 }],
+      sort_basis: 'UPLOADED',
+    });
+
+    const sql = query.mock.calls[0][0];
+    expect(sql).toContain('created_at >= $4::timestamp');
+    expect(sql).toContain('created_at < $5::timestamp');
+    expect(sql).toContain('ORDER BY created_at DESC, file_id DESC');
+    expect(query.mock.calls[0][1]).toEqual([
+      'USER1',
+      'clip',
+      null,
+      '2026-07-03',
+      '2026-07-04',
+      6,
+      0,
+      ['clip'],
+      false,
+    ]);
+  });
+
+  it('expands search scope for admin viewers', async () => {
+    const query = jest.fn<MockQuery>()
+      .mockResolvedValueOnce({ rows: [{ file_id: 42, owner_user_id: 'USER2', file_name: 'shared.mp4' }], rowCount: 1 });
+    const service = serviceWith(query, indexingService);
+
+    await service.searchFiles({ keyword: 'shared' }, { userId: 'ADMIN', roles: ['ROLE_ADMIN'] });
+
+    expect(query.mock.calls[0][0]).toContain('($9::boolean OR owner_user_id = $1 OR owner_user_id = \'ADMIN\')');
+    expect(query.mock.calls[0][1]).toEqual([
+      'ADMIN',
+      'shared',
+      null,
+      null,
+      null,
+      21,
+      0,
+      ['shared'],
+      true,
+    ]);
+  });
 });
 
 function serviceWith(query: jest.MockedFunction<MockQuery>, indexingService: Pick<IndexingService, 'ensureNotRunning'>): DriveService {
