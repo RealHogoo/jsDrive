@@ -201,6 +201,50 @@ describe('DriveService management features', () => {
     expect(userQuery).toHaveBeenNthCalledWith(1, expect.any(String), ['USER1', false]);
   });
 
+  it('allows only admins to move all files in a week to trash', async () => {
+    const query = jest.fn<MockQuery>()
+      .mockResolvedValueOnce({
+        rows: [
+          { file_id: 1, file_size: '10' },
+          { file_id: 2, file_size: '25' },
+        ],
+        rowCount: 2,
+      })
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 });
+    const service = serviceWith(query, indexingService);
+
+    await expect(service.deleteWeekFiles({
+      week_start: '2026-07-01',
+      content_kind: 'VIDEO',
+      sort_basis: 'UPLOADED',
+    }, { userId: 'ADMIN', roles: ['ROLE_ADMIN'] })).resolves.toMatchObject({
+      content_kind: 'VIDEO',
+      deleted_count: 2,
+      deleted_bytes: 35,
+      sort_basis: 'UPLOADED',
+    });
+
+    expect(query.mock.calls[0][0]).toContain("SET deleted_yn = 'Y'");
+    expect(query.mock.calls[0][0]).toContain('created_at >= CAST($2 AS timestamp)');
+    expect(query.mock.calls[0][0]).toContain('content_kind = $4');
+    expect(query.mock.calls[0][1]).toEqual([
+      'ADMIN',
+      '2026-06-29T00:00:00.000Z',
+      '2026-07-06T00:00:00.000Z',
+      'VIDEO',
+    ]);
+  });
+
+  it('rejects week delete for non-admin viewers', async () => {
+    const query = jest.fn<MockQuery>();
+    const service = serviceWith(query, indexingService);
+
+    await expect(service.deleteWeekFiles({
+      week_start: '2026-07-01',
+    }, { userId: 'USER1', roles: [] })).rejects.toThrow('admin permission is required');
+    expect(query).not.toHaveBeenCalled();
+  });
+
   it('backfills missing content hashes from existing files', async () => {
     const filePath = join(tempDir, 'sample.txt');
     writeFileSync(filePath, 'hello');

@@ -89,6 +89,7 @@
       + "</div>"
       + "<div class=\"week-actions\">"
       + "<a class=\"btn\" href=\"" + escapeAttr(zipUrl) + "\">일괄 다운로드</a>"
+      + "<button class=\"btn danger\" type=\"button\" data-admin-only hidden data-action=\"delete-week\" data-week-start=\"" + escapeAttr(weekStart) + "\" data-week-label=\"" + escapeAttr(week.label || weekStart) + "\">주차 전체 삭제</button>"
       + "<a class=\"btn\" href=\"" + escapeAttr(detailUrl) + "\">더보기</a>"
       + "</div>"
       + "</div>"
@@ -97,6 +98,12 @@
   }
 
   async function handleFeedClick(event) {
+    var weekButton = event.target.closest("[data-action=\"delete-week\"]");
+    if (weekButton) {
+      event.preventDefault();
+      await deleteWeek(weekButton);
+      return;
+    }
     var button = event.target.closest("[data-action=\"delete-file\"]");
     if (!button) {
       return;
@@ -112,6 +119,30 @@
         card.remove();
       }
       summary.textContent = "파일을 휴지통으로 이동했습니다.";
+    } catch (error) {
+      summary.textContent = error.message;
+    }
+  }
+
+  async function deleteWeek(button) {
+    var weekStart = button.getAttribute("data-week-start") || "";
+    var weekLabel = button.getAttribute("data-week-label") || weekStart;
+    var kindLabel = contentKind.value === "ALL" ? "전체 종류" : contentKind.options[contentKind.selectedIndex].textContent;
+    if (!window.confirm(weekLabel + " / " + kindLabel + " 파일을 모두 휴지통으로 이동할까요? 이 작업은 관리자만 실행할 수 있습니다.")) {
+      return;
+    }
+    summary.textContent = "주차 파일을 휴지통으로 이동하는 중입니다.";
+    try {
+      var data = await Webhard.postJson("/file/delete-week.json", {
+        week_start: weekStart,
+        content_kind: contentKind.value,
+        sort_basis: sortBasis.value
+      });
+      var section = button.closest(".week-section");
+      if (section) {
+        section.remove();
+      }
+      summary.textContent = "주차 파일 " + Number(data.deleted_count || 0) + "개를 휴지통으로 이동했습니다.";
     } catch (error) {
       summary.textContent = error.message;
     }

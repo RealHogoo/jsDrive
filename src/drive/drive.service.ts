@@ -1,10 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { HttpStatus, Injectable } from '@nestjs/common';
 import { createHash, randomBytes, randomUUID, scryptSync } from 'crypto';
 import { mkdir, rename, unlink, writeFile } from 'fs/promises';
 import { createReadStream, existsSync } from 'fs';
 import { extname, isAbsolute, join, relative, resolve, sep } from 'path';
 import sharp from 'sharp';
 import { ApiException } from '../common/api-exception';
+import { ApiCode } from '../common/api-code';
 import { safePathSegment, storageRoot } from '../common/storage-path';
 import { createImageThumbnail, createVideoThumbnail } from '../common/thumbnail';
 import { uploadLimits } from '../common/upload-limit';
@@ -500,6 +501,63 @@ export class DriveService {
     const file = { file_id: result.rows[0]?.file_id };
     await this.audit('FILE_DELETE', viewer, { target_type: 'FILE', target_id: file.file_id as number | null });
     return file;
+  }
+
+  async deleteWeekFiles(params: Record<string, unknown>, viewer: Viewer): Promise<Record<string, unknown>> {
+    if (!isAdminViewer(viewer)) {
+      throw new ApiException(ApiCode.FORBIDDEN, HttpStatus.FORBIDDEN, 'admin permission is required');
+    }
+    const weekStart = optionalDateOnly(params.week_start);
+    if (!weekStart) {
+      throw ApiException.badRequest('week_start is required');
+    }
+    const contentKind = optionalContentKind(params.content_kind);
+    const sortBasis = normalizeSortBasis(params.sort_basis);
+    const dateColumn = sortBasisDateColumn(sortBasis);
+    const start = startOfWeek(new Date(`${weekStart}T00:00:00.000Z`));
+    const end = new Date(start);
+    end.setUTCDate(end.getUTCDate() + 7);
+    const contentKindFilter = contentKind ? 'AND content_kind = $4' : '';
+    const queryParams = contentKind
+      ? [viewer.userId, start.toISOString(), end.toISOString(), contentKind]
+      : [viewer.userId, start.toISOString(), end.toISOString()];
+    const result = await this.databaseService.query<{ file_id: number; file_size: string }>(
+      `
+      UPDATE wh_file
+      SET deleted_yn = 'Y',
+          deleted_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP,
+          updated_by = $1
+      WHERE deleted_yn = 'N'
+        AND ${dateColumn} >= CAST($2 AS timestamp)
+        AND ${dateColumn} < CAST($3 AS timestamp)
+        ${contentKindFilter}
+      RETURNING file_id, file_size
+      `,
+      queryParams,
+    );
+    const deletedCount = result.rowCount || 0;
+    const deletedBytes = result.rows.reduce((sum, file) => sum + Number(file.file_size || 0), 0);
+    await this.audit('FILE_DELETE_WEEK', viewer, {
+      target_type: 'FILE',
+      target_id: null,
+      detail: {
+        week_start: toDateOnly(start),
+        week_end: toDateOnly(end),
+        sort_basis: sortBasis,
+        content_kind: contentKind || 'ALL',
+        deleted_count: deletedCount,
+        deleted_bytes: deletedBytes,
+      },
+    });
+    return {
+      week_start: start.toISOString(),
+      week_end: end.toISOString(),
+      sort_basis: sortBasis,
+      content_kind: contentKind || 'ALL',
+      deleted_count: deletedCount,
+      deleted_bytes: deletedBytes,
+    };
   }
 
   async trashList(params: Record<string, unknown>, viewer: Viewer): Promise<Record<string, unknown>> {

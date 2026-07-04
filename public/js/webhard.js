@@ -61,6 +61,9 @@
     Array.prototype.forEach.call((root || document).querySelectorAll("[data-permission]"), function (element) {
       element.hidden = !can(element.getAttribute("data-permission"));
     });
+    Array.prototype.forEach.call((root || document).querySelectorAll("[data-admin-only]"), function (element) {
+      element.hidden = !(currentUserCache && currentUserCache.is_admin === true);
+    });
   }
 
   function populateFolderSelect(selectId, selectedValue) {

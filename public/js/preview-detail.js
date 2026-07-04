@@ -14,6 +14,7 @@
   var grid = document.getElementById("detailGrid");
   var sentinel = document.getElementById("detailSentinel");
   var downloadWeek = document.getElementById("downloadWeek");
+  var deleteWeek = document.getElementById("deleteWeek");
   var downloadStatus = document.getElementById("downloadStatus");
   var offset = 0;
   var loading = false;
@@ -26,6 +27,9 @@
   contentKind.addEventListener("change", resetAndLoad);
   sortBasis.addEventListener("change", resetAndLoad);
   downloadWeek.addEventListener("click", startDownloadJob);
+  if (deleteWeek) {
+    deleteWeek.addEventListener("click", deleteCurrentWeek);
+  }
   grid.addEventListener("click", handleGridClick);
 
   window.addEventListener("scroll", function () {
@@ -83,6 +87,29 @@
       window.setTimeout(function () { pollDownloadJob(jobId); }, 1000);
     } catch (error) {
       downloadStatus.textContent = error.message;
+    }
+  }
+
+  async function deleteCurrentWeek() {
+    if (!weekStart) {
+      summary.textContent = "주차 정보가 없습니다.";
+      return;
+    }
+    var kindLabel = contentKind.value === "ALL" ? "전체 종류" : contentKind.options[contentKind.selectedIndex].textContent;
+    if (!window.confirm(label + " / " + kindLabel + " 파일을 모두 휴지통으로 이동할까요? 이 작업은 관리자만 실행할 수 있습니다.")) {
+      return;
+    }
+    summary.textContent = "주차 파일을 휴지통으로 이동하는 중입니다.";
+    try {
+      var data = await Webhard.postJson("/file/delete-week.json", {
+        week_start: weekStart,
+        content_kind: contentKind.value,
+        sort_basis: sortBasis.value
+      });
+      summary.textContent = "주차 파일 " + Number(data.deleted_count || 0) + "개를 휴지통으로 이동했습니다.";
+      resetAndLoad();
+    } catch (error) {
+      summary.textContent = error.message;
     }
   }
 
