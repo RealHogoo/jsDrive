@@ -110,6 +110,7 @@ export class WebController {
   @Public()
   @Get('error.html')
   async error(@Res() response: Response): Promise<void> {
+    setNoStore(response);
     response.sendFile(pagePath('error.html'));
   }
 
@@ -123,7 +124,7 @@ export class WebController {
       return;
     }
     if (source === 'cookie' && isCrossSiteRequest(request)) {
-      this.renderError(response, 403, '?몄쬆 荑좏궎瑜??ъ슜?????녿뒗 ?붿껌?낅땲??');
+      this.renderError(response, 403, '인증 쿠키를 사용할 수 없는 요청입니다.');
       return;
     }
     if (await this.isWebhardServiceDisabled(accessToken)) {
@@ -134,6 +135,7 @@ export class WebController {
       this.renderError(response, 403);
       return;
     }
+    setNoStore(response);
     const html = injectBodyDataAttributes(pageHtml('share.html'), {
       webhardShareToken: token || '',
     });
@@ -481,6 +483,7 @@ export class WebController {
       return;
     }
 
+    setNoStore(response);
     const html = pageHtml(pageName);
     response.type('html').send(injectWebhardBootstrap(
       injectVersionBadge(html, this.versionService.version()),
@@ -520,6 +523,7 @@ export class WebController {
   }
 
   private renderError(response: Response, status: number, message?: string): void {
+    setNoStore(response);
     const html = injectBodyDataAttributes(pageHtml('error.html'), {
       errorCode: String(status),
       errorMessage: message || '',
@@ -714,6 +718,12 @@ function setFileCacheHeaders(
   if (request.header('if-none-match') === etag) {
     response.status(304);
   }
+}
+
+function setNoStore(response: Response): void {
+  response.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+  response.setHeader('Pragma', 'no-cache');
+  response.setHeader('Expires', '0');
 }
 
 function injectVersionBadge(html: string, version: { service: string; revision: string }): string {

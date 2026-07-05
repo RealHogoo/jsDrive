@@ -1603,7 +1603,7 @@ function normalizeTags(value: unknown): string | null {
 function searchTokens(value: string | null): string[] {
   return uniqueTextValues(
     String(value || '')
-      .split(/[\s\[\]\(\)\{\}_.+\-~!@#$%^&=;:'"\\/|,]+/u)
+      .split(/[^\p{L}\p{N}]+/u)
       .filter((token) => token.length >= 2 || /^\d+$/.test(token)),
   ).slice(0, 8);
 }

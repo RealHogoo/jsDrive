@@ -1,4 +1,5 @@
 import { Body, Controller, ForbiddenException, Post, Req, Res } from '@nestjs/common';
+import { createHash, timingSafeEqual } from 'crypto';
 import { createReadStream, statSync } from 'fs';
 import { Request, Response } from 'express';
 import { Public } from '../auth/public.decorator';
@@ -169,9 +170,18 @@ function parseByteRange(value: string, fileSize: number): { start: number; end: 
 function ensureInternalToken(request: Request): void {
   const expected = internalToken();
   const provided = String(request.header('x-internal-api-token') || '').trim();
-  if (!expected || provided !== expected) {
+  if (!secureTokenEquals(provided, expected)) {
     throw new ForbiddenException('internal api token is invalid');
   }
+}
+
+function secureTokenEquals(provided: string, expected: string): boolean {
+  if (!provided || !expected) {
+    return false;
+  }
+  const providedHash = createHash('sha256').update(provided).digest();
+  const expectedHash = createHash('sha256').update(expected).digest();
+  return timingSafeEqual(providedHash, expectedHash);
 }
 
 function ensureInternalIpAllowed(request: Request): void {

@@ -1,169 +1,99 @@
 # 웹하드 서비스
 
-## 화면 개요
+## 개요
 
-웹하드 서비스는 구글 드라이브와 유사한 파일/폴더 관리 기능을 제공한다.
-초기 범위는 개인별 폴더/파일 메타데이터 관리와 공유 링크 생성이다.
+웹하드 서비스는 사용자별 파일과 폴더를 관리하고, 미리보기, 검색, 공유 링크, 휴지통, 주간 ZIP 다운로드, 미디어 서비스 연동 기능을 제공한다.
 
-## 주요 기능
+## 주요 화면
 
-- 폴더 목록 조회
-- 폴더 생성/수정
-- 파일 목록 조회
-- 파일 메타데이터 등록
-- 사진/동영상 파일 업로드
-- 파일 또는 폴더 공유 링크 생성
-- 원본 생성일 기준 일별/주별/월별 미리보기
-- 어드민 서비스 JWT/권한 연동
+- `/index.html`: 파일 탐색
+- `/upload.html`: 파일 업로드
+- `/dashboard.html`: 현황 대시보드
+- `/preview.html`: 일/주/월 미리보기
+- `/preview-detail.html`: 미리보기 상세
+- `/search.html`: 통합 검색
+- `/download-jobs.html`: ZIP 다운로드 작업
+- `/indexing.html`: NAS 파일 인덱싱
+- `/shares.html`: 공유 링크 관리
+- `/trash.html`: 휴지통
+- `/audit.html`: 감사 로그
 
-## 화면 흐름
+## 인증과 권한
 
-1. 사용자가 웹하드 화면에 진입한다.
-2. 프런트는 어드민 로그인에서 받은 JWT를 `Authorization: Bearer` 헤더로 전송한다.
-3. 웹하드 서비스는 어드민 `/auth/me.json`으로 사용자를 확인한다.
-4. 목록 API는 본인 소유 데이터만 조회한다.
-5. 저장/공유 API는 `WEBHARD_SERVICE` 권한을 추가로 확인한다.
-6. 업로드 화면은 파일의 브라우저 `lastModified` 값을 원본 생성일 기본값으로 제안한다.
-7. 사용자는 원본 촬영일/생성일이 다르면 직접 수정한다.
+화면과 API는 `admin-service`에서 발급한 JWT를 사용한다. 일반 사용자는 `WEBHARD_SERVICE` 서비스 권한이 하나 이상 필요하고, 쓰기/공유/삭제 기능은 세부 권한을 추가로 확인한다.
 
-## 화면 진입 권한
-
-- `/`, `/index.html`, `/upload.html`, `/preview.html`은 어드민 로그인 토큰이 있어야 접근할 수 있다.
-- 비로그인 사용자는 `admin-service`의 `/service-login-page.do`로 이동한다.
-- 일반 사용자는 `WEBHARD_SERVICE` 권한이 하나 이상 있어야 화면에 진입할 수 있다.
-- `ROLE_ADMIN`, `ROLE_SUPER_ADMIN`은 권한 목록 없이도 진입할 수 있다.
-
-## API 명세
-
-### `POST /folder/list.json`
-
-요청:
-
-```json
-{
-  "parent_folder_id": null
-}
-```
-
-응답:
-
-```json
-{
-  "ok": true,
-  "code": "OK",
-  "message": "success",
-  "data": {
-    "items": []
-  },
-  "trace_id": null
-}
-```
-
-### `POST /folder/save.json`
-
-권한: `WEBHARD_SERVICE.WRITE`
-
-요청:
-
-```json
-{
-  "folder_id": null,
-  "parent_folder_id": null,
-  "folder_name": "문서"
-}
-```
-
-### `POST /file/list.json`
-
-요청:
-
-```json
-{
-  "folder_id": null
-}
-```
-
-### `POST /file/register.json`
-
-권한: `WEBHARD_SERVICE.WRITE`
-
-요청:
-
-```json
-{
-  "folder_id": 1,
-  "file_name": "sample.pdf",
-  "file_size": 1024,
-  "content_type": "application/pdf",
-  "storage_path": "/volume1/webhard/sample.pdf"
-}
-```
-
-### `POST /file/upload.json`
-
-권한: `WEBHARD_SERVICE.WRITE`
-
-요청: `multipart/form-data`
-
-| 필드 | 설명 |
+| 권한 | 기능 |
 | --- | --- |
-| `file` | 사진 또는 동영상 파일 |
-| `folder_id` | 선택 폴더 ID |
-| `original_created_at` | 원본 생성일 ISO datetime |
+| `WRITE` | 폴더 생성/수정, 파일 업로드, 파일 이동, 메타데이터 수정, 인덱싱 |
+| `SHARE` | 공유 링크 생성과 해지 |
+| `DELETE` | 휴지통 이동, 복원, 영구 삭제, 오래된 휴지통 정리 |
 
-### `POST /preview/list.json`
+`ROLE_ADMIN`, `ROLE_SUPER_ADMIN`은 웹하드 권한 검사를 통과한다.
 
-요청:
+## 주요 API
 
-```json
-{
-  "period_type": "day",
-  "base_date": "2026-05-08",
-  "content_kind": "ALL"
-}
-```
+- `POST /folder/list.json`
+- `POST /folder/tree.json`
+- `POST /folder/save.json`
+- `POST /folder/move.json`
+- `POST /file/list.json`
+- `POST /file/search.json`
+- `POST /file/detail.json`
+- `POST /file/upload.json`
+- `POST /file/upload-batch.json`
+- `POST /file/metadata.json`
+- `POST /file/move.json`
+- `POST /file/delete.json`
+- `POST /trash/list.json`
+- `POST /trash/restore.json`
+- `POST /trash/purge.json`
+- `POST /preview/list.json`
+- `POST /preview/feed.json`
+- `POST /share/create.json`
+- `POST /share/list.json`
+- `POST /share/revoke.json`
+- `POST /audit/list.json`
+- `POST /index/start.json`
+- `POST /index/status.json`
 
-`period_type`은 `day`, `week`, `month`를 지원한다.
-조회 범위는 등록일이 아니라 `wh_file.original_created_at` 기준이다.
+## 공개 다운로드 URL
 
-### `POST /share/create.json`
+- `GET /file/content/:fileId`
+- `GET /file/thumbnail/:fileId`
+- `GET /file/download/:fileId`
+- `GET /share/download/:token`
+- `POST /share/download/:token`
+- `GET /download/file/:jobId`
 
-권한: `WEBHARD_SERVICE.SHARE`
+이 URL들도 사용자 인증 또는 공유 링크 검증을 거친다. 공유 링크 다운로드는 메모리 rate limit을 적용하고, 비밀번호가 있는 링크는 POST 요청에서 비밀번호를 검증한다.
 
-요청:
+## 파일 저장 구조
 
-```json
-{
-  "file_id": 1,
-  "expires_at": "2026-06-01 00:00:00"
-}
-```
-
-## DB 설계
-
-- `wh_folder`: 폴더 메타데이터
-- `wh_file`: 파일 메타데이터
-- `wh_share`: 공유 링크
-
-상세 SQL은 `docs/sql/postgres/schema.sql`을 기준으로 한다.
-
-## 저장소 루트
-
-서비스 실행 시 `WEBHARD_STORAGE_ROOT`로 파일 저장 루트를 지정한다.
-업로드 파일은 로그인 계정별 폴더 아래에 저장한다.
+업로드 파일은 기본적으로 다음 구조로 저장한다.
 
 ```text
 <WEBHARD_STORAGE_ROOT>/<login_id>/yyyy/mm/dd/<uuid>.<ext>
 ```
 
-NAS 디렉터리를 마운트한 뒤 `WEBHARD_STORAGE_ROOT`로 지정하면 신규 업로드는 NAS에 저장된다.
-기존 NAS 파일은 DB 메타데이터가 없으면 화면에 표시되지 않는다.
-기존 파일까지 보려면 NAS 경로를 스캔해서 `wh_file`에 등록하는 인덱싱 기능이 필요하다.
+DB에는 실제 파일 경로가 `wh_file.storage_path`로 저장된다. 저장소에서 파일을 직접 삭제하면 미리보기와 다운로드가 실패할 수 있으므로, 삭제는 서비스 기능을 통해 수행한다.
 
-## 예외/에러 케이스
+## 미디어 서비스 연동
 
-- JWT 없음: `UNAUTHORIZED`
-- 어드민 `/auth/me.json` 검증 실패: `UNAUTHORIZED`
-- 권한 없음: `FORBIDDEN`
-- 필수값 누락: `BAD_REQUEST`
-- DB 장애: `SERVER_ERROR`
+`/internal/media/*` API는 media-service가 웹하드 파일을 조회하거나 스트리밍할 때 사용한다. 내부 API는 다음 조건을 모두 만족해야 한다.
+
+- `x-internal-api-token`이 서버에 설정된 내부 토큰과 일치
+- 호출 IP가 `MEDIA_INTERNAL_ALLOWED_IPS` 또는 `WEBHARD_INTERNAL_ALLOWED_IPS`에 포함
+- 사용자 스코프가 필요한 요청은 `x-user-access-token`으로 admin-service 사용자 검증
+
+내부 토큰은 상수시간 비교로 검증하며, 운영 기본 토큰 사용은 차단한다.
+
+## DB 주요 테이블
+
+- `wh_folder`: 폴더 메타데이터
+- `wh_file`: 파일 메타데이터
+- `wh_share`: 공유 링크
+- `wh_index_job`: NAS 인덱싱 작업
+- `wh_download_job`: ZIP 다운로드 작업
+- `wh_audit_log`: 감사 로그
+
+기준 스키마는 `docs/sql/postgres/schema.sql`을 따른다.

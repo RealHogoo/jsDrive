@@ -211,6 +211,7 @@ function mockResponse() {
     redirect: jest.fn(),
     send: jest.fn(),
     sendFile: jest.fn(),
+    setHeader: jest.fn(),
     status: jest.fn(),
     type: jest.fn(),
   });
