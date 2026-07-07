@@ -973,7 +973,9 @@ export class DriveService {
 
   async internalRegisterYoutubeFile(params: Record<string, unknown>): Promise<Record<string, unknown>> {
     const ownerUserId = requiredText(params.owner_user_id, 'owner_user_id is required');
-    const fileName = await this.youtubeFileNameWithInternalNumber(normalizeFileName(requiredText(params.file_name, 'file_name is required')));
+    const rawFileName = normalizeFileName(requiredText(params.file_name, 'file_name is required'));
+    const isKaraoke = optionalBoolean(params.is_karaoke);
+    const fileName = isKaraoke ? await this.youtubeFileNameWithInternalNumber(rawFileName) : rawFileName;
     const fileSize = optionalNumber(params.file_size, 'file_size') || 0;
     const contentType = optionalText(params.content_type) || 'video/mp4';
     if (contentKindFor(contentType, fileName) !== 'VIDEO') {
