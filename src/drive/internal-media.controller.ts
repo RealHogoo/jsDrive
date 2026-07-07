@@ -52,6 +52,13 @@ export class InternalMediaController {
     return ok(await this.driveService.internalMarkMediaPublic(scopedBody), traceId(request));
   }
 
+  @Post('bulk-public.json')
+  async bulkPublic(@Body() body: Record<string, unknown> = {}, @Req() request: Request) {
+    ensureInternalAccess(request);
+    const scopedBody = await this.scopedBody(request, body, { requireAdmin: true });
+    return ok(await this.driveService.internalBulkMediaPublic(scopedBody), traceId(request));
+  }
+
   @Post('file-stream.json')
   async fileStream(@Body() body: Record<string, unknown> = {}, @Req() request: Request, @Res() response: Response) {
     ensureInternalAccess(request);

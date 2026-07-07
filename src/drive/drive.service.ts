@@ -881,6 +881,32 @@ export class DriveService {
     return { updated_count: result.rowCount || 0, file_ids: result.rows.map((row) => Number(row.file_id)) };
   }
 
+  async internalBulkMediaPublic(params: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const viewerUserId = requiredText(params.viewer_user_id, 'viewer_user_id is required');
+    const fileIds = arrayParam(params.file_ids)
+      .map((item) => Number(item))
+      .filter((item) => Number.isSafeInteger(item) && item > 0)
+      .slice(0, 1000);
+    if (fileIds.length === 0) {
+      return { updated_count: 0, file_ids: [] };
+    }
+    const publicYn = optionalBoolean(params.media_public_yn) ? 'Y' : 'N';
+    const result = await this.databaseService.query<{ file_id: number }>(
+      `
+      UPDATE wh_file
+      SET media_public_yn = $2,
+          updated_at = CURRENT_TIMESTAMP,
+          updated_by = $3
+      WHERE file_id = ANY($1::bigint[])
+        AND content_kind = 'VIDEO'
+        AND deleted_yn = 'N'
+      RETURNING file_id
+      `,
+      [fileIds, publicYn, viewerUserId],
+    );
+    return { updated_count: result.rowCount || 0, file_ids: result.rows.map((row) => Number(row.file_id)) };
+  }
+
   async internalMediaFileStream(params: Record<string, unknown>): Promise<{
     storagePath: string;
     fileName: string;
