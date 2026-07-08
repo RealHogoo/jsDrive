@@ -87,7 +87,7 @@ export class AdminServiceClient {
           'Content-Type': 'application/json',
           'X-Internal-Api-Token': this.internalApiToken,
         },
-        body: JSON.stringify({ service_cd: targetServiceCode }),
+        body: JSON.stringify({ service_cd: serviceRegistryCode(targetServiceCode) }),
       });
     } catch (_exception) {
       return null;
@@ -138,6 +138,10 @@ function normalizePermissions(raw: unknown): Record<string, string[]> {
 
 function normalizeCode(value: string): string {
   return value.trim().replace(/[- ]/g, '_').toUpperCase();
+}
+
+function serviceRegistryCode(value: string): string {
+  return normalizeCode(value).toLowerCase().replace(/_/g, '-');
 }
 
 function internalApiToken(): string {
