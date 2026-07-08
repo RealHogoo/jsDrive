@@ -27,6 +27,13 @@
       <a class="btn" href="/preview.html">목록으로</a>
       <a id="downloadWeek" class="btn" href="#">일괄 다운로드</a>
       <button id="deleteWeek" class="btn danger" type="button" data-admin-only hidden>이 주차 전체 삭제</button>
+      <form id="changeOwnerForm" class="inline-owner-form" data-admin-only hidden>
+        <label>
+          소유자
+          <input id="ownerUserId" class="input" autocomplete="off" placeholder="사용자 ID">
+        </label>
+        <button class="btn" type="submit">소유자 변경</button>
+      </form>
       <span id="downloadStatus" class="summary"></span>
     </section>
 

@@ -15,6 +15,8 @@
   var sentinel = document.getElementById("detailSentinel");
   var downloadWeek = document.getElementById("downloadWeek");
   var deleteWeek = document.getElementById("deleteWeek");
+  var changeOwnerForm = document.getElementById("changeOwnerForm");
+  var ownerUserId = document.getElementById("ownerUserId");
   var downloadStatus = document.getElementById("downloadStatus");
   var offset = 0;
   var loading = false;
@@ -29,6 +31,9 @@
   downloadWeek.addEventListener("click", startDownloadJob);
   if (deleteWeek) {
     deleteWeek.addEventListener("click", deleteCurrentWeek);
+  }
+  if (changeOwnerForm) {
+    changeOwnerForm.addEventListener("submit", changeCurrentWeekOwner);
   }
   grid.addEventListener("click", handleGridClick);
 
@@ -107,6 +112,36 @@
         sort_basis: sortBasis.value
       });
       summary.textContent = "주차 파일 " + Number(data.deleted_count || 0) + "개를 휴지통으로 이동했습니다.";
+      resetAndLoad();
+    } catch (error) {
+      summary.textContent = error.message;
+    }
+  }
+
+  async function changeCurrentWeekOwner(event) {
+    event.preventDefault();
+    if (!weekStart) {
+      summary.textContent = "주차 정보가 없습니다.";
+      return;
+    }
+    var nextOwner = String(ownerUserId && ownerUserId.value || "").trim();
+    if (!nextOwner) {
+      summary.textContent = "변경할 소유자 ID를 입력하세요.";
+      return;
+    }
+    var kindLabel = contentKind.value === "ALL" ? "전체 종류" : contentKind.options[contentKind.selectedIndex].textContent;
+    if (!window.confirm(label + " / " + kindLabel + " 파일 소유자를 " + nextOwner + "(으)로 변경할까요?")) {
+      return;
+    }
+    summary.textContent = "파일 소유자를 변경하는 중입니다.";
+    try {
+      var data = await Webhard.postJson("/file/change-owner-week.json", {
+        week_start: weekStart,
+        content_kind: contentKind.value,
+        sort_basis: sortBasis.value,
+        owner_user_id: nextOwner
+      });
+      summary.textContent = "파일 " + Number(data.changed_count || 0) + "개의 소유자를 " + data.owner_user_id + "(으)로 변경했습니다.";
       resetAndLoad();
     } catch (error) {
       summary.textContent = error.message;

@@ -122,6 +122,11 @@ export class DriveController {
     return ok(await this.driveService.deleteWeekFiles(body, viewer(request)), traceId(request));
   }
 
+  @Post('file/change-owner-week.json')
+  async changeWeekOwner(@Body() body: Record<string, unknown> = {}, @Req() request: Request) {
+    return ok(await this.driveService.changeWeekOwner(body, viewer(request)), traceId(request));
+  }
+
   @Post('trash/list.json')
   async trashList(@Body() body: Record<string, unknown> = {}, @Req() request: Request) {
     return ok(await this.driveService.trashList(body, viewer(request)), traceId(request));

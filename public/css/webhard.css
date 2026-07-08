@@ -92,6 +92,17 @@ body {
   flex-wrap: wrap;
 }
 
+.inline-owner-form {
+  display: flex;
+  align-items: end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.inline-owner-form .input {
+  width: 180px;
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

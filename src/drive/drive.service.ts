@@ -560,6 +560,67 @@ export class DriveService {
     };
   }
 
+  async changeWeekOwner(params: Record<string, unknown>, viewer: Viewer): Promise<Record<string, unknown>> {
+    if (!isAdminViewer(viewer)) {
+      throw new ApiException(ApiCode.FORBIDDEN, HttpStatus.FORBIDDEN, 'admin permission is required');
+    }
+    const weekStart = optionalDateOnly(params.week_start);
+    if (!weekStart) {
+      throw ApiException.badRequest('week_start is required');
+    }
+    const targetOwnerUserId = ownerUserIdText(params.owner_user_id);
+    const contentKind = optionalContentKind(params.content_kind);
+    const sortBasis = normalizeSortBasis(params.sort_basis);
+    const dateColumn = sortBasisDateColumn(sortBasis);
+    const start = startOfWeek(new Date(`${weekStart}T00:00:00.000Z`));
+    const end = new Date(start);
+    end.setUTCDate(end.getUTCDate() + 7);
+    const contentKindFilter = contentKind ? 'AND content_kind = $5' : '';
+    const queryParams = contentKind
+      ? [viewer.userId, targetOwnerUserId, start.toISOString(), end.toISOString(), contentKind]
+      : [viewer.userId, targetOwnerUserId, start.toISOString(), end.toISOString()];
+    const result = await this.databaseService.query<{ file_id: number; file_size: string }>(
+      `
+      UPDATE wh_file
+      SET owner_user_id = $2,
+          folder_id = NULL,
+          updated_at = CURRENT_TIMESTAMP,
+          updated_by = $1
+      WHERE deleted_yn = 'N'
+        AND owner_user_id <> $2
+        AND ${dateColumn} >= CAST($3 AS timestamp)
+        AND ${dateColumn} < CAST($4 AS timestamp)
+        ${contentKindFilter}
+      RETURNING file_id, file_size
+      `,
+      queryParams,
+    );
+    const changedCount = result.rowCount || 0;
+    const changedBytes = result.rows.reduce((sum, file) => sum + Number(file.file_size || 0), 0);
+    await this.audit('FILE_CHANGE_OWNER_WEEK', viewer, {
+      target_type: 'FILE',
+      target_id: null,
+      detail: {
+        week_start: toDateOnly(start),
+        week_end: toDateOnly(end),
+        sort_basis: sortBasis,
+        content_kind: contentKind || 'ALL',
+        owner_user_id: targetOwnerUserId,
+        changed_count: changedCount,
+        changed_bytes: changedBytes,
+      },
+    });
+    return {
+      week_start: start.toISOString(),
+      week_end: end.toISOString(),
+      sort_basis: sortBasis,
+      content_kind: contentKind || 'ALL',
+      owner_user_id: targetOwnerUserId,
+      changed_count: changedCount,
+      changed_bytes: changedBytes,
+    };
+  }
+
   async trashList(params: Record<string, unknown>, viewer: Viewer): Promise<Record<string, unknown>> {
     const offset = optionalNumber(params.offset, 'offset') || 0;
     const limit = Math.min(Math.max(optionalNumber(params.limit, 'limit') || 20, 1), 100);
@@ -1611,6 +1672,14 @@ function requiredText(value: unknown, message: string): string {
   const text = optionalText(value);
   if (!text) {
     throw ApiException.badRequest(message);
+  }
+  return text;
+}
+
+function ownerUserIdText(value: unknown): string {
+  const text = requiredText(value, 'owner_user_id is required');
+  if (text.length > 80 || !/^[a-zA-Z0-9._-]+$/.test(text)) {
+    throw ApiException.badRequest('owner_user_id is invalid');
   }
   return text;
 }
