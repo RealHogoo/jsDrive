@@ -182,6 +182,26 @@ describe('WebController share download security', () => {
     expect(response.send).toHaveBeenCalledWith(expect.stringContaining('data-error-code="S4003"'));
     expect(query).not.toHaveBeenCalled();
   });
+
+  it('renders disabled page before login redirect when webhard service is disabled', async () => {
+    const query = jest.fn<MockQuery>();
+    const fetchCurrentUser = jest.fn<() => Promise<Record<string, unknown>>>();
+    const controller = controllerWith(query, {
+      fetchCurrentUser,
+      fetchServiceStatus: jest.fn<() => Promise<Record<string, unknown>>>().mockResolvedValue({
+        service_cd: 'webhard-service',
+        use_yn: 'N',
+      }),
+    });
+    const response = mockResponse();
+
+    await controller.index({ header: jest.fn(), headers: {} } as any, response as any);
+
+    expect(response.status).toHaveBeenCalledWith(403);
+    expect(response.send).toHaveBeenCalledWith(expect.stringContaining('data-error-code="S4003"'));
+    expect(response.redirect).not.toHaveBeenCalled();
+    expect(fetchCurrentUser).not.toHaveBeenCalled();
+  });
 });
 
 function controllerWith(query: jest.MockedFunction<MockQuery>, adminServiceClient: Record<string, unknown> = {}): WebController {

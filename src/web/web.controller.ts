@@ -119,6 +119,10 @@ export class WebController {
   @Get('s/:token')
   async sharePage(@Param('token') token: string, @Req() request: Request, @Res() response: Response): Promise<void> {
     const { token: accessToken, source } = authTokenWithSource(request);
+    if (await this.isWebhardServiceDisabled()) {
+      this.renderServiceDisabledError(response);
+      return;
+    }
     const currentUser = accessToken ? await this.adminServiceClient.fetchCurrentUser(accessToken) : null;
     if (!currentUser) {
       response.redirect(this.loginUrl(request));
@@ -470,13 +474,13 @@ export class WebController {
     pageName: 'index.html' | 'upload.html' | 'dashboard.html' | 'preview.html' | 'preview-detail.html' | 'file-detail.html' | 'trash.html' | 'search.html' | 'download-jobs.html' | 'indexing.html' | 'shares.html' | 'audit.html',
   ): Promise<void> {
     const accessToken = authToken(request);
+    if (await this.isWebhardServiceDisabled()) {
+      this.renderServiceDisabledError(response);
+      return;
+    }
     const currentUser = accessToken ? await this.adminServiceClient.fetchCurrentUser(accessToken) : null;
     if (!currentUser) {
       response.redirect(this.loginUrl(request));
-      return;
-    }
-    if (await this.isWebhardServiceDisabled(accessToken)) {
-      this.renderServiceDisabledError(response);
       return;
     }
     if (!isAdmin(currentUser.roles) && !hasAnyWebhardPermission(currentUser.service_permissions)) {
@@ -494,6 +498,10 @@ export class WebController {
 
   private async currentWebhardUser(request: Request, response: Response) {
     const { token, source } = authTokenWithSource(request);
+    if (await this.isWebhardServiceDisabled()) {
+      this.renderServiceDisabledError(response);
+      return null;
+    }
     if (!token) {
       this.renderError(response, 401);
       return null;
@@ -507,10 +515,6 @@ export class WebController {
       this.renderError(response, 401);
       return null;
     }
-    if (await this.isWebhardServiceDisabled(token)) {
-      this.renderServiceDisabledError(response);
-      return null;
-    }
     if (!isAdmin(currentUser.roles) && !hasAnyWebhardPermission(currentUser.service_permissions)) {
       this.renderError(response, 403);
       return null;
@@ -518,7 +522,7 @@ export class WebController {
     return currentUser;
   }
 
-  private async isWebhardServiceDisabled(accessToken: string): Promise<boolean> {
+  private async isWebhardServiceDisabled(accessToken?: string): Promise<boolean> {
     const serviceStatus = await this.adminServiceClient.fetchServiceStatus(accessToken, WEBHARD_SERVICE);
     return serviceStatus?.use_yn.toUpperCase() === 'N';
   }
