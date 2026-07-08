@@ -179,6 +179,7 @@ describe('WebController share download security', () => {
     expect(response.status).toHaveBeenCalledWith(403);
     expect(response.type).toHaveBeenCalledWith('html');
     expect(response.send).toHaveBeenCalledWith(expect.stringContaining('data-error-message'));
+    expect(response.send).toHaveBeenCalledWith(expect.stringContaining('data-error-code="S4003"'));
     expect(query).not.toHaveBeenCalled();
   });
 });

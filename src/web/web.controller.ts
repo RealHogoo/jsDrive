@@ -19,6 +19,7 @@ const SHARE_DOWNLOAD_RATE_LIMIT = {
   windowMs: Number(process.env.WEBHARD_SHARE_DOWNLOAD_RATE_LIMIT_WINDOW_SECONDS || 300) * 1000,
 };
 const SHARE_DOWNLOAD_ATTEMPTS = new Map<string, { count: number; expiresAt: number }>();
+const WEBHARD_SERVICE_DISABLED_MESSAGE = '웹하드 서비스가 관리자에 의해 비활성화되었습니다.';
 
 @Controller()
 export class WebController {
@@ -128,7 +129,7 @@ export class WebController {
       return;
     }
     if (await this.isWebhardServiceDisabled(accessToken)) {
-      this.renderError(response, 403, '\uc6f9\ud558\ub4dc \uc11c\ube44\uc2a4\uac00 \uad00\ub9ac\uc790\uc5d0 \uc758\ud574 \ube44\ud65c\uc131\ud654\ub418\uc5c8\uc2b5\ub2c8\ub2e4.');
+      this.renderServiceDisabledError(response);
       return;
     }
     if (!isAdmin(currentUser.roles) && !hasAnyWebhardPermission(currentUser.service_permissions)) {
@@ -475,7 +476,7 @@ export class WebController {
       return;
     }
     if (await this.isWebhardServiceDisabled(accessToken)) {
-      this.renderError(response, 403, '\uc6f9\ud558\ub4dc \uc11c\ube44\uc2a4\uac00 \uad00\ub9ac\uc790\uc5d0 \uc758\ud574 \ube44\ud65c\uc131\ud654\ub418\uc5c8\uc2b5\ub2c8\ub2e4.');
+      this.renderServiceDisabledError(response);
       return;
     }
     if (!isAdmin(currentUser.roles) && !hasAnyWebhardPermission(currentUser.service_permissions)) {
@@ -507,7 +508,7 @@ export class WebController {
       return null;
     }
     if (await this.isWebhardServiceDisabled(token)) {
-      this.renderError(response, 403, '\uc6f9\ud558\ub4dc \uc11c\ube44\uc2a4\uac00 \uad00\ub9ac\uc790\uc5d0 \uc758\ud574 \ube44\ud65c\uc131\ud654\ub418\uc5c8\uc2b5\ub2c8\ub2e4.');
+      this.renderServiceDisabledError(response);
       return null;
     }
     if (!isAdmin(currentUser.roles) && !hasAnyWebhardPermission(currentUser.service_permissions)) {
@@ -529,6 +530,15 @@ export class WebController {
       errorMessage: message || '',
     });
     response.status(status).type('html').send(html);
+  }
+
+  private renderServiceDisabledError(response: Response): void {
+    setNoStore(response);
+    const html = injectBodyDataAttributes(pageHtml('error.html'), {
+      errorCode: 'S4003',
+      errorMessage: WEBHARD_SERVICE_DISABLED_MESSAGE,
+    });
+    response.status(403).type('html').send(html);
   }
 
   private async findOwnedFile(fileId: string, ownerUserId: string, includeAllUsers = false) {

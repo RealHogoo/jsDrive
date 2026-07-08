@@ -18,6 +18,19 @@ describe('AuthGuard webhard access', () => {
     await expect(guard.canActivate(contextWithAuth())).resolves.toBe(true);
   });
 
+  it('returns service disabled code when webhard service is disabled', async () => {
+    const guard = guardWithUser(
+      { roles: [], service_permissions: { WEBHARD_SERVICE: ['READ'] } },
+      undefined,
+      'N',
+    );
+
+    await expect(guard.canActivate(contextWithAuth())).rejects.toMatchObject({
+      code: 'SERVICE_DISABLED',
+      status: 403,
+    });
+  });
+
   it('still requires specific permissions when a handler declares one', async () => {
     const guard = guardWithUser(
       { roles: [], service_permissions: { WEBHARD_SERVICE: ['READ'] } },
@@ -28,7 +41,7 @@ describe('AuthGuard webhard access', () => {
   });
 });
 
-function guardWithUser(currentUser: Record<string, unknown>, requiredPermission?: string): AuthGuard {
+function guardWithUser(currentUser: Record<string, unknown>, requiredPermission?: string, serviceUseYn = 'Y'): AuthGuard {
   const reflector = {
     getAllAndOverride: jest.fn()
       .mockReturnValueOnce(false)
@@ -41,7 +54,7 @@ function guardWithUser(currentUser: Record<string, unknown>, requiredPermission?
     }),
     fetchServiceStatus: jest.fn<() => Promise<Record<string, unknown>>>().mockResolvedValue({
       service_cd: 'webhard-service',
-      use_yn: 'Y',
+      use_yn: serviceUseYn,
     }),
   };
   return new AuthGuard(reflector as any, adminServiceClient as any);
