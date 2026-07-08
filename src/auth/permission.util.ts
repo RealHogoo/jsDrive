@@ -1,6 +1,7 @@
 const WEBHARD_SERVICE = 'WEBHARD_SERVICE';
+const MEDIA_SERVICE = 'MEDIA_SERVICE';
 
-export { WEBHARD_SERVICE };
+export { MEDIA_SERVICE, WEBHARD_SERVICE };
 
 export function isAdmin(roles: string[]): boolean {
   return roles.includes('ROLE_ADMIN') || roles.includes('ROLE_SUPER_ADMIN');
@@ -15,6 +16,18 @@ export function hasPermission(
 
 export function hasAnyWebhardPermission(permissions: Record<string, string[]>): boolean {
   return hasAnyServicePermission(permissions, WEBHARD_SERVICE);
+}
+
+export function hasMediaAccessPermission(permissions: Record<string, string[]>): boolean {
+  return hasAnyServicePermission(permissions, MEDIA_SERVICE) || hasAnyWebhardPermission(permissions);
+}
+
+export function hasMediaPermission(
+  permissions: Record<string, string[]>,
+  permissionCode: string,
+): boolean {
+  return hasServicePermission(permissions, MEDIA_SERVICE, permissionCode)
+    || hasServicePermission(permissions, WEBHARD_SERVICE, permissionCode);
 }
 
 export function hasServicePermission(

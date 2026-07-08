@@ -6,7 +6,7 @@ import { Public } from '../auth/public.decorator';
 import { ok } from '../common/api-response';
 import { traceId } from '../common/request-util';
 import { AdminServiceClient, CurrentUser } from '../integration/admin/admin-service.client';
-import { hasAnyServicePermission, hasServicePermission, isAdmin } from '../auth/permission.util';
+import { hasMediaAccessPermission, hasMediaPermission, isAdmin } from '../auth/permission.util';
 import { DriveService } from './drive.service';
 
 @Public()
@@ -112,7 +112,7 @@ export class InternalMediaController {
     if (options.requireAdmin && !isAdmin(currentUser.roles)) {
       throw new ForbiddenException('admin permission is required');
     }
-    if (options.requireWrite && !isAdmin(currentUser.roles) && !hasServicePermission(currentUser.service_permissions, 'MEDIA_SERVICE', 'WRITE')) {
+    if (options.requireWrite && !isAdmin(currentUser.roles) && !hasMediaPermission(currentUser.service_permissions, 'WRITE')) {
       throw new ForbiddenException('write permission is required');
     }
     const viewerUserId = String(body.viewer_user_id || body.owner_user_id || '').trim();
@@ -136,7 +136,7 @@ export class InternalMediaController {
     if (!currentUser) {
       throw new ForbiddenException('admin user token is invalid');
     }
-    if (!isAdmin(currentUser.roles) && !hasAnyServicePermission(currentUser.service_permissions, 'MEDIA_SERVICE')) {
+    if (!isAdmin(currentUser.roles) && !hasMediaAccessPermission(currentUser.service_permissions)) {
       throw new ForbiddenException('media permission is required');
     }
     return currentUser;
