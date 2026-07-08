@@ -80,6 +80,22 @@ describe('DriveService management features', () => {
     expect(query.mock.calls[0][0]).not.toContain('storage_path');
   });
 
+  it('allows admins to open another user file detail', async () => {
+    const query = jest.fn<MockQuery>()
+      .mockResolvedValueOnce({
+        rows: [{ file_id: 7, owner_user_id: 'siheyon', file_name: 'lesson.mp4', content_sha256: null }],
+        rowCount: 1,
+      });
+    const service = serviceWith(query, indexingService);
+
+    await expect(service.fileDetail({ file_id: 7 }, { userId: 'ADMIN', roles: ['ROLE_ADMIN'] })).resolves.toMatchObject({
+      file_id: 7,
+      file_name: 'lesson.mp4',
+    });
+    expect(query.mock.calls[0][0]).toContain('($3::boolean OR owner_user_id = $2 OR owner_user_id = \'ADMIN\')');
+    expect(query.mock.calls[0][1]).toEqual([7, 'ADMIN', true]);
+  });
+
   it('includes admin-owned files in search results for non-owner lookup', async () => {
     const query = jest.fn<MockQuery>()
       .mockResolvedValueOnce({
@@ -427,6 +443,33 @@ describe('DriveService management features', () => {
       0,
       ['shared'],
       true,
+    ]);
+  });
+
+  it('expands preview feed scope for admin viewers', async () => {
+    const query = jest.fn<MockQuery>()
+      .mockResolvedValueOnce({ rows: [{ week_start: '2026-07-06', item_count: '1' }], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [{ file_id: 99, owner_user_id: 'siheyon', file_name: 'lesson.mp4', created_at: '2026-07-07T00:00:00.000Z' }], rowCount: 1 });
+    const service = serviceWith(query, indexingService);
+
+    await expect(service.previewFeed({
+      cursor_date: '2026-07-08',
+      content_kind: 'VIDEO',
+      sort_basis: 'UPLOADED',
+    }, { userId: 'ADMIN', roles: ['ROLE_ADMIN'] })).resolves.toMatchObject({
+      weeks: [{ items: [{ file_id: 99 }] }],
+    });
+
+    expect(query.mock.calls[0][0]).toContain('($3::boolean OR owner_user_id = $1)');
+    expect(query.mock.calls[0][1]).toEqual(['ADMIN', '2026-07-13T00:00:00.000Z', true, 'VIDEO', 5]);
+    expect(query.mock.calls[1][0]).toContain('($4::boolean OR owner_user_id = $1)');
+    expect(query.mock.calls[1][1]).toEqual([
+      'ADMIN',
+      '2026-07-06T00:00:00.000Z',
+      '2026-07-13T00:00:00.000Z',
+      true,
+      'VIDEO',
+      20,
     ]);
   });
 });

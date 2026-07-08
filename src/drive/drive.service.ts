@@ -188,16 +188,17 @@ export class DriveService {
     if (fileId == null) {
       throw ApiException.badRequest('file_id is required');
     }
+    const includeAllUsers = isAdminViewer(viewer);
     const result = await this.databaseService.query(
       `
       SELECT file_id, folder_id, file_name, display_name, memo, tags, file_size, content_type, content_kind,
              content_sha256, public_path, thumbnail_path, original_created_at, created_at, updated_at
       FROM wh_file
       WHERE file_id = $1
-        AND (owner_user_id = $2 OR owner_user_id = 'ADMIN')
+        AND ($3::boolean OR owner_user_id = $2 OR owner_user_id = 'ADMIN')
         AND deleted_yn = 'N'
       `,
-      [fileId, viewer.userId],
+      [fileId, viewer.userId, includeAllUsers],
     );
     if (result.rowCount === 0) {
       throw ApiException.badRequest('file not found');
@@ -1276,20 +1277,21 @@ export class DriveService {
     const sortBasis = normalizeSortBasis(params.sort_basis);
     const dateColumn = sortBasisDateColumn(sortBasis);
     const range = periodRange(periodType, baseDate);
+    const includeAllUsers = isAdminViewer(viewer);
 
     const result = await this.databaseService.query(
       `
       SELECT file_id, folder_id, file_name, display_name, file_size, content_type, content_kind,
              public_path, thumbnail_path, original_created_at, created_at
       FROM wh_file
-      WHERE owner_user_id = $1
+      WHERE ($5::boolean OR owner_user_id = $1)
         AND deleted_yn = 'N'
         AND ${dateColumn} >= CAST($2 AS timestamp)
         AND ${dateColumn} < CAST($3 AS timestamp)
         AND ($4::varchar IS NULL OR content_kind = $4)
       ORDER BY ${dateColumn} DESC, file_id DESC
       `,
-      [viewer.userId, range.start, range.end, contentKind],
+      [viewer.userId, range.start, range.end, contentKind, includeAllUsers],
     );
     return {
       period_type: periodType,
@@ -1310,26 +1312,22 @@ export class DriveService {
     const dateColumn = sortBasisDateColumn(sortBasis);
     const upperBound = nextWeekStart(cursorDate);
     const previewItemLimit = Math.min(Math.max(optionalNumber(params.preview_item_limit, 'preview_item_limit') || 20, 1), 50);
-    const weekContentKindFilter = contentKind ? 'AND content_kind = $3' : '';
-    const weekLimitParam = contentKind ? '$4' : '$3';
-    const weekParams = contentKind
-      ? [viewer.userId, upperBound, contentKind, safeWeeks]
-      : [viewer.userId, upperBound, safeWeeks];
+    const includeAllUsers = isAdminViewer(viewer);
 
     const weekResult = await this.databaseService.query<{ week_start: string; item_count: string }>(
       `
       SELECT to_char(date_trunc('week', ${dateColumn})::date, 'YYYY-MM-DD') AS week_start,
              COUNT(*) AS item_count
       FROM wh_file
-      WHERE owner_user_id = $1
+      WHERE ($3::boolean OR owner_user_id = $1)
         AND deleted_yn = 'N'
         AND ${dateColumn} < CAST($2 AS timestamp)
-        ${weekContentKindFilter}
+        AND ($4::varchar IS NULL OR content_kind = $4)
       GROUP BY date_trunc('week', ${dateColumn})::date
       ORDER BY week_start DESC
-      LIMIT ${weekLimitParam}
+      LIMIT $5
       `,
-      weekParams,
+      [viewer.userId, upperBound, includeAllUsers, contentKind, safeWeeks],
     );
     if (weekResult.rows.length === 0) {
       return {
@@ -1345,12 +1343,6 @@ export class DriveService {
     const oldestWeekStart = dateOnlyToUtc(weekResult.rows[weekResult.rows.length - 1].week_start);
     const newestWeekEnd = new Date(newestWeekStart);
     newestWeekEnd.setUTCDate(newestWeekEnd.getUTCDate() + 7);
-    const itemContentKindFilter = contentKind ? 'AND content_kind = $4' : '';
-    const itemLimitParam = contentKind ? '$5' : '$4';
-    const itemParams = contentKind
-      ? [viewer.userId, oldestWeekStart.toISOString(), newestWeekEnd.toISOString(), contentKind, previewItemLimit]
-      : [viewer.userId, oldestWeekStart.toISOString(), newestWeekEnd.toISOString(), previewItemLimit];
-
     const itemResult = await this.databaseService.query(
       `
       WITH ranked AS (
@@ -1361,19 +1353,19 @@ export class DriveService {
                  ORDER BY ${dateColumn} DESC, file_id DESC
                ) AS rn
         FROM wh_file
-        WHERE owner_user_id = $1
+        WHERE ($4::boolean OR owner_user_id = $1)
           AND deleted_yn = 'N'
           AND ${dateColumn} >= CAST($2 AS timestamp)
           AND ${dateColumn} < CAST($3 AS timestamp)
-          ${itemContentKindFilter}
+          AND ($5::varchar IS NULL OR content_kind = $5)
       )
       SELECT file_id, folder_id, file_name, display_name, file_size, content_type, content_kind,
              public_path, thumbnail_path, original_created_at, created_at
       FROM ranked
-      WHERE rn <= ${itemLimitParam}
+      WHERE rn <= $6
       ORDER BY ${dateColumn} DESC, file_id DESC
       `,
-      itemParams,
+      [viewer.userId, oldestWeekStart.toISOString(), newestWeekEnd.toISOString(), includeAllUsers, contentKind, previewItemLimit],
     );
 
     return {
@@ -1401,27 +1393,22 @@ export class DriveService {
     const start = startOfWeek(new Date(`${weekStart}T00:00:00.000Z`));
     const end = new Date(start);
     end.setUTCDate(end.getUTCDate() + 7);
-    const contentKindFilter = contentKind ? 'AND content_kind = $4' : '';
-    const limitParam = contentKind ? '$5' : '$4';
-    const offsetParam = contentKind ? '$6' : '$5';
-    const queryParams = contentKind
-      ? [viewer.userId, start.toISOString(), end.toISOString(), contentKind, limit + 1, offset]
-      : [viewer.userId, start.toISOString(), end.toISOString(), limit + 1, offset];
+    const includeAllUsers = isAdminViewer(viewer);
 
     const result = await this.databaseService.query(
       `
       SELECT file_id, folder_id, file_name, display_name, file_size, content_type, content_kind,
              public_path, thumbnail_path, original_created_at, created_at
       FROM wh_file
-      WHERE owner_user_id = $1
+      WHERE ($4::boolean OR owner_user_id = $1)
         AND deleted_yn = 'N'
         AND ${dateColumn} >= CAST($2 AS timestamp)
         AND ${dateColumn} < CAST($3 AS timestamp)
-        ${contentKindFilter}
+        AND ($5::varchar IS NULL OR content_kind = $5)
       ORDER BY ${dateColumn} DESC, file_id DESC
-      LIMIT ${limitParam} OFFSET ${offsetParam}
+      LIMIT $6 OFFSET $7
       `,
-      queryParams,
+      [viewer.userId, start.toISOString(), end.toISOString(), includeAllUsers, contentKind, limit + 1, offset],
     );
     const rows = result.rows.slice(0, limit);
 

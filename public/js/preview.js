@@ -14,6 +14,7 @@
   contentKind.addEventListener("change", resetAndLoad);
   sortBasis.addEventListener("change", resetAndLoad);
   feed.addEventListener("click", handleFeedClick);
+  feed.addEventListener("submit", handleFeedSubmit);
 
   window.addEventListener("scroll", function () {
     if (isPageBottom()) {
@@ -90,6 +91,10 @@
       + "<div class=\"week-actions\">"
       + "<a class=\"btn\" href=\"" + escapeAttr(zipUrl) + "\">일괄 다운로드</a>"
       + "<button class=\"btn danger\" type=\"button\" data-admin-only hidden data-action=\"delete-week\" data-week-start=\"" + escapeAttr(weekStart) + "\" data-week-label=\"" + escapeAttr(week.label || weekStart) + "\">주차 전체 삭제</button>"
+      + "<form class=\"inline-owner-form\" data-admin-only hidden data-action=\"change-owner-week\" data-week-start=\"" + escapeAttr(weekStart) + "\" data-week-label=\"" + escapeAttr(week.label || weekStart) + "\">"
+      + "<label>소유자<input class=\"input\" name=\"owner_user_id\" autocomplete=\"off\" placeholder=\"사용자 ID\"></label>"
+      + "<button class=\"btn\" type=\"submit\">변경</button>"
+      + "</form>"
       + "<a class=\"btn\" href=\"" + escapeAttr(detailUrl) + "\">더보기</a>"
       + "</div>"
       + "</div>"
@@ -124,6 +129,15 @@
     }
   }
 
+  async function handleFeedSubmit(event) {
+    var form = event.target.closest("[data-action=\"change-owner-week\"]");
+    if (!form) {
+      return;
+    }
+    event.preventDefault();
+    await changeWeekOwner(form);
+  }
+
   async function deleteWeek(button) {
     var weekStart = button.getAttribute("data-week-start") || "";
     var weekLabel = button.getAttribute("data-week-label") || weekStart;
@@ -143,6 +157,37 @@
         section.remove();
       }
       summary.textContent = "주차 파일 " + Number(data.deleted_count || 0) + "개를 휴지통으로 이동했습니다.";
+    } catch (error) {
+      summary.textContent = error.message;
+    }
+  }
+
+  async function changeWeekOwner(form) {
+    var weekStart = form.getAttribute("data-week-start") || "";
+    var weekLabel = form.getAttribute("data-week-label") || weekStart;
+    var input = form.querySelector("input[name=\"owner_user_id\"]");
+    var nextOwner = String(input && input.value || "").trim();
+    var kindLabel = contentKind.value === "ALL" ? "전체 종류" : contentKind.options[contentKind.selectedIndex].textContent;
+    if (!nextOwner) {
+      summary.textContent = "변경할 소유자 ID를 입력하세요.";
+      return;
+    }
+    if (!window.confirm(weekLabel + " / " + kindLabel + " 파일 소유자를 " + nextOwner + "(으)로 변경할까요?")) {
+      return;
+    }
+    summary.textContent = "파일 소유자를 변경하는 중입니다.";
+    try {
+      var data = await Webhard.postJson("/file/change-owner-week.json", {
+        week_start: weekStart,
+        content_kind: contentKind.value,
+        sort_basis: sortBasis.value,
+        owner_user_id: nextOwner
+      });
+      var section = form.closest(".week-section");
+      if (section && Number(data.changed_count || 0) > 0) {
+        section.remove();
+      }
+      summary.textContent = "파일 " + Number(data.changed_count || 0) + "개의 소유자를 " + data.owner_user_id + "(으)로 변경했습니다.";
     } catch (error) {
       summary.textContent = error.message;
     }
