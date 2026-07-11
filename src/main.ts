@@ -9,10 +9,14 @@ import { ApiExceptionFilter } from './common/api-exception.filter';
 async function bootstrap(): Promise<void> {
   validateProductionConfig();
   const app = await NestFactory.create(AppModule, { cors: false });
+  if (trustForwardedHeaders()) {
+    app.getHttpAdapter().getInstance().set('trust proxy', 'loopback, linklocal, uniquelocal');
+  }
   app.useGlobalFilters(new ApiExceptionFilter());
-  app.use((_request: Request, response: Response, next: NextFunction) => {
+  app.use((request: Request, response: Response, next: NextFunction) => {
     response.setHeader('X-Content-Type-Options', 'nosniff');
     response.setHeader('X-Frame-Options', 'DENY');
+    response.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
     response.setHeader('Content-Security-Policy', [
       "default-src 'self'",
       "script-src 'self'",
@@ -29,11 +33,16 @@ async function bootstrap(): Promise<void> {
     response.setHeader('Referrer-Policy', 'same-origin');
     response.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
     response.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+    response.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+    if (request.secure || String(request.header('x-forwarded-proto') || '').split(',')[0].trim() === 'https') {
+      response.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    }
     next();
   });
   app.use('/assets', serveStatic(join(process.cwd(), 'public'), {
     etag: true,
-    maxAge: '5m',
+    immutable: true,
+    maxAge: '1h',
   }));
   const port = Number(process.env.PORT || 8083);
   await app.listen(port);
@@ -72,8 +81,8 @@ function requireProductionSecret(name: string, options: { fallbackName?: string 
   if (!value) {
     throw new Error(`${name} is required in production`);
   }
-  if (value === 'dev-media-internal-token') {
-    throw new Error(`${name} must not use the development default in production`);
+  if (value.length < 32 || value === 'dev-media-internal-token') {
+    throw new Error(`${name} must be a strong non-default token in production`);
   }
 }
 
@@ -84,4 +93,8 @@ function isProductionEnv(): boolean {
 
 function isLocalhost(hostname: string): boolean {
   return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+}
+
+function trustForwardedHeaders(): boolean {
+  return String(process.env.TRUST_FORWARDED_HEADERS || '').trim().toLowerCase() === 'true';
 }
