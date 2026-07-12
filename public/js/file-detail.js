@@ -42,7 +42,7 @@
   }
 
   function render(item) {
-    var mediaPath = "/file/content/" + encodeURIComponent(item.file_id);
+    var mediaPath = "/file/content/" + encodeURIComponent(item.file_id) + "?quality=" + encodeURIComponent(preferredVideoQuality());
     fileName.textContent = item.file_name || "파일 상세";
     fileKind.textContent = Webhard.kindLabel(item.content_kind);
     fileSize.textContent = Webhard.formatSize(Number(item.file_size || 0));
@@ -168,6 +168,12 @@
     box.appendChild(title);
     box.appendChild(hint);
     return box;
+  }
+
+  function preferredVideoQuality() {
+    var width = Math.max(window.innerWidth || 0, document.documentElement.clientWidth || 0);
+    var ratio = window.devicePixelRatio || 1;
+    return width * ratio >= 1200 ? "1080" : "720";
   }
 
   function escapeHtml(value) {

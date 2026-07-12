@@ -333,13 +333,13 @@ export class WebController {
     if (!currentUser) {
       return;
     }
-    const file = await this.findOwnedFile(fileId, currentUser.user_id, isAdmin(currentUser.roles));
-    const storagePath = safeExistingStoragePath(file?.storage_path);
+    const file = await this.findOwnedFile(fileId, currentUser.user_id, isAdmin(currentUser.roles), playbackQuality(request.query.quality));
+    const storagePath = safeExistingStoragePath(file?.playback_path || file?.storage_path);
     if (!file || !storagePath) {
       this.renderError(response, 404, '요청한 파일을 찾을 수 없습니다.');
       return;
     }
-    const contentType = safeInlineContentType(file.content_type);
+    const contentType = safeInlineContentType(file.playback_content_type || file.content_type);
     if (!contentType) {
       const fileName = safeDownloadName(file.file_name || 'download');
       if (trySendAccelRedirect(response, storagePath, {
@@ -545,7 +545,7 @@ export class WebController {
     response.status(403).type('html').send(html);
   }
 
-  private async findOwnedFile(fileId: string, ownerUserId: string, includeAllUsers = false) {
+  private async findOwnedFile(fileId: string, ownerUserId: string, includeAllUsers = false, quality: '720' | '1080' | null = null) {
     const parsedFileId = Number(fileId);
     if (!Number.isSafeInteger(parsedFileId) || parsedFileId <= 0) {
       return null;
@@ -553,17 +553,24 @@ export class WebController {
     const result = await this.databaseService.query<{
       file_name: string;
       storage_path: string;
+      playback_path: string | null;
       thumbnail_path: string | null;
       content_type: string;
+      playback_content_type: string | null;
     }>(
       `
-      SELECT file_name, storage_path, thumbnail_path, content_type
-      FROM wh_file
-      WHERE file_id = $1
-        AND ($3::boolean OR owner_user_id = $2 OR owner_user_id = 'ADMIN')
-        AND deleted_yn = 'N'
+      SELECT f.file_name, f.storage_path, v.storage_path AS playback_path,
+             f.thumbnail_path, f.content_type,
+             CASE WHEN v.storage_path IS NULL THEN NULL ELSE 'video/mp4' END AS playback_content_type
+      FROM wh_file f
+      LEFT JOIN wh_transcode_variant v
+        ON v.file_id = f.file_id
+       AND v.quality = $4
+      WHERE f.file_id = $1
+        AND ($3::boolean OR f.owner_user_id = $2 OR f.owner_user_id = 'ADMIN')
+        AND f.deleted_yn = 'N'
       `,
-      [parsedFileId, ownerUserId, includeAllUsers],
+      [parsedFileId, ownerUserId, includeAllUsers, quality],
     );
     return result.rows[0] || null;
   }
@@ -704,6 +711,12 @@ function trimTrailingSlash(value: string): string {
 function safeInlineContentType(contentType: string | null | undefined): string | null {
   const normalized = String(contentType || '').split(';')[0].trim().toLowerCase();
   return SAFE_INLINE_CONTENT_TYPES.has(normalized) ? normalized : null;
+}
+
+function playbackQuality(value: unknown): '720' | '1080' | null {
+  const rawValue = Array.isArray(value) ? value[0] : value;
+  const normalized = typeof rawValue === 'string' ? rawValue.trim() : '';
+  return normalized === '720' || normalized === '1080' ? normalized : null;
 }
 
 const SAFE_INLINE_CONTENT_TYPES = new Set([

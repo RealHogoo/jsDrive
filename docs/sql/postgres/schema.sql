@@ -106,6 +106,40 @@ CREATE TABLE IF NOT EXISTS wh_download_job (
     CONSTRAINT ck_wh_download_job_status CHECK (status_cd IN ('RUNNING', 'DONE', 'FAILED'))
 );
 
+CREATE TABLE IF NOT EXISTS wh_transcode_job (
+    job_id         BIGSERIAL PRIMARY KEY,
+    file_id        BIGINT NOT NULL,
+    status_cd      VARCHAR(20) NOT NULL,
+    requested_by   VARCHAR(100) NOT NULL,
+    source_path    VARCHAR(1000),
+    message        VARCHAR(1000),
+    attempt_count  INTEGER NOT NULL DEFAULT 0,
+    started_at     TIMESTAMP,
+    finished_at    TIMESTAMP,
+    created_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_by     VARCHAR(100) NOT NULL,
+    updated_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_by     VARCHAR(100) NOT NULL,
+    CONSTRAINT fk_wh_transcode_job_file FOREIGN KEY (file_id) REFERENCES wh_file (file_id),
+    CONSTRAINT ck_wh_transcode_job_status CHECK (status_cd IN ('PENDING', 'RUNNING', 'DONE', 'FAILED', 'SKIPPED'))
+);
+
+CREATE TABLE IF NOT EXISTS wh_transcode_variant (
+    variant_id     BIGSERIAL PRIMARY KEY,
+    file_id        BIGINT NOT NULL,
+    quality        VARCHAR(20) NOT NULL,
+    storage_path   VARCHAR(1000) NOT NULL,
+    file_size      BIGINT NOT NULL DEFAULT 0,
+    content_sha256 VARCHAR(64),
+    created_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_by     VARCHAR(100) NOT NULL,
+    updated_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_by     VARCHAR(100) NOT NULL,
+    CONSTRAINT fk_wh_transcode_variant_file FOREIGN KEY (file_id) REFERENCES wh_file (file_id),
+    CONSTRAINT ck_wh_transcode_variant_quality CHECK (quality IN ('720', '1080')),
+    CONSTRAINT uq_wh_transcode_variant UNIQUE (file_id, quality)
+);
+
 CREATE TABLE IF NOT EXISTS wh_audit_log (
     log_id        BIGSERIAL PRIMARY KEY,
     actor_user_id VARCHAR(100) NOT NULL,
@@ -139,6 +173,16 @@ CREATE INDEX IF NOT EXISTS idx_wh_index_job_01
 
 CREATE INDEX IF NOT EXISTS idx_wh_download_job_01
     ON wh_download_job (owner_user_id, job_id DESC);
+
+CREATE INDEX IF NOT EXISTS idx_wh_transcode_job_01
+    ON wh_transcode_job (status_cd, created_at ASC, job_id ASC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_wh_transcode_job_active
+    ON wh_transcode_job (file_id)
+    WHERE status_cd IN ('PENDING', 'RUNNING');
+
+CREATE INDEX IF NOT EXISTS idx_wh_transcode_variant_01
+    ON wh_transcode_variant (file_id, quality);
 
 CREATE INDEX IF NOT EXISTS idx_wh_file_04
     ON wh_file (owner_user_id, storage_path);

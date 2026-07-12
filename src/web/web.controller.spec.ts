@@ -152,7 +152,7 @@ describe('WebController share download security', () => {
 
       await controller.fileDownload('238', requestWithBearerToken() as any, response as any);
 
-      expect(query).toHaveBeenCalledWith(expect.stringContaining("owner_user_id = 'ADMIN'"), [238, 'USER1', false]);
+      expect(query).toHaveBeenCalledWith(expect.stringContaining("owner_user_id = 'ADMIN'"), [238, 'USER1', false, null]);
       expect(response.download).toHaveBeenCalledWith(filePath, 'song.mp4');
     } finally {
       rmSync(tempDir, { recursive: true, force: true });

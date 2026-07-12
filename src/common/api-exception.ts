@@ -14,6 +14,10 @@ export class ApiException extends Error {
     return new ApiException(ApiCode.BAD_REQUEST, HttpStatus.BAD_REQUEST, message);
   }
 
+  static forbidden(message: string): ApiException {
+    return new ApiException(ApiCode.FORBIDDEN, HttpStatus.FORBIDDEN, message);
+  }
+
   static serviceDisabled(message: string): ApiException {
     return new ApiException(ApiCode.SERVICE_DISABLED, HttpStatus.FORBIDDEN, message);
   }
