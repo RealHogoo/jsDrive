@@ -980,27 +980,35 @@ export class DriveService {
     const viewerIsAdmin = Boolean(params.viewer_is_admin);
     const allowPublic = Boolean(params.allow_public);
     const kind = requiredText(params.file_kind, 'file_kind is required');
+    const quality = playbackQuality(params.quality);
     const result = await this.databaseService.query<{
       file_name: string;
       storage_path: string;
+      playback_path: string | null;
       thumbnail_path: string | null;
       content_type: string;
+      playback_content_type: string | null;
     }>(
       `
-      SELECT file_name, storage_path, thumbnail_path, content_type
-      FROM wh_file
-      WHERE deleted_yn = 'N'
-        AND file_id = $1
-        AND ($2::boolean OR owner_user_id = $3 OR ($4::boolean AND media_public_yn = 'Y'))
+      SELECT f.file_name, f.storage_path, v.storage_path AS playback_path,
+             f.thumbnail_path, f.content_type,
+             CASE WHEN v.storage_path IS NULL THEN NULL ELSE 'video/mp4' END AS playback_content_type
+      FROM wh_file f
+      LEFT JOIN wh_transcode_variant v
+        ON v.file_id = f.file_id
+       AND v.quality = $5
+      WHERE f.deleted_yn = 'N'
+        AND f.file_id = $1
+        AND ($2::boolean OR f.owner_user_id = $3 OR ($4::boolean AND f.media_public_yn = 'Y'))
       LIMIT 1
       `,
-      [fileId, viewerIsAdmin, viewerUserId, allowPublic],
+      [fileId, viewerIsAdmin, viewerUserId, allowPublic, quality],
     );
     const item = result.rows[0];
     if (!item) {
       throw ApiException.badRequest('media file not found');
     }
-    const rawPath = kind === 'thumbnail' ? item.thumbnail_path : item.storage_path;
+    const rawPath = kind === 'thumbnail' ? item.thumbnail_path : (kind === 'content' ? item.playback_path || item.storage_path : item.storage_path);
     const storagePath = safeExistingStoragePath(String(rawPath || ''));
     if (!storagePath) {
       throw ApiException.badRequest('media file path not found');
@@ -1022,7 +1030,7 @@ export class DriveService {
       };
     }
     if (kind === 'content') {
-      const contentType = safeInlineContentType(String(item.content_type || ''));
+      const contentType = safeInlineContentType(String(item.playback_content_type || item.content_type || ''));
       return {
         storagePath,
         fileName: String(item.file_name || 'download'),
@@ -1940,6 +1948,12 @@ function safeInlineContentType(value: string): string | null {
     'video/x-msvideo',
   ]);
   return allowed.has(contentType) ? contentType : null;
+}
+
+function playbackQuality(value: unknown): '720' | '1080' | null {
+  const rawValue = Array.isArray(value) ? value[0] : value;
+  const normalized = typeof rawValue === 'string' ? rawValue.trim() : '';
+  return normalized === '720' || normalized === '1080' ? normalized : null;
 }
 
 function optionalTimestamp(value: unknown, fieldName: string): string | null {
