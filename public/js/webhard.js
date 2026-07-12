@@ -96,13 +96,18 @@
     return date.toLocaleString("ko-KR", { hour12: false });
   }
 
-  function mediaCard(item) {
+  function mediaCard(item, options) {
+    options = options || {};
     var mediaPath = item.file_id ? "/file/content/" + encodeURIComponent(item.file_id) : "";
     var media = mediaPath
       ? mediaElement(item, mediaPath)
       : "<div class=\"preview-media missing-media\">미리보기 없음</div>";
+    var detailUrl = "/file-detail.html?file_id=" + encodeURIComponent(item.file_id || "");
+    if (options.returnUrl) {
+      detailUrl += "&return_url=" + encodeURIComponent(options.returnUrl);
+    }
     return "<article class=\"preview-card\" data-file-id=\"" + encodeURIComponent(item.file_id || "") + "\">"
-      + "<a class=\"media-link\" href=\"/file-detail.html?file_id=" + encodeURIComponent(item.file_id || "") + "\">" + media + "</a>"
+      + "<a class=\"media-link\" href=\"" + escapeAttr(detailUrl) + "\">" + media + "</a>"
       + "<div class=\"preview-meta\">"
       + "<div class=\"preview-name\">" + escapeHtml(item.display_name || item.file_name) + "</div>"
       + "<div>" + kindLabel(item.content_kind) + " / " + formatSize(Number(item.file_size || 0)) + "</div>"

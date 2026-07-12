@@ -11,6 +11,7 @@
   var fileHash = document.getElementById("fileHash");
   var message = document.getElementById("message");
   var download = document.getElementById("downloadFile");
+  var backButton = document.getElementById("backButton");
   var metadataForm = document.getElementById("metadataForm");
   var moveForm = document.getElementById("moveForm");
   var shareForm = document.getElementById("shareForm");
@@ -20,6 +21,9 @@
   metadataForm.addEventListener("submit", saveMetadata);
   moveForm.addEventListener("submit", moveFile);
   shareForm.addEventListener("submit", createShare);
+  if (backButton) {
+    backButton.addEventListener("click", goBack);
+  }
 
   load();
 
@@ -52,6 +56,35 @@
     Webhard.populateFolderSelect("targetFolderId", item.folder_id || "");
     renderDuplicates(item.duplicates || []);
     viewer.replaceChildren(mediaElement(item, mediaPath));
+  }
+
+  function goBack(event) {
+    event.preventDefault();
+    var returnUrl = safeReturnUrl(params.get("return_url") || "");
+    if (returnUrl) {
+      window.location.href = returnUrl;
+      return;
+    }
+    if (window.history.length > 1) {
+      window.history.back();
+      return;
+    }
+    window.location.href = "/preview.html";
+  }
+
+  function safeReturnUrl(value) {
+    if (!value) {
+      return "";
+    }
+    try {
+      var url = new URL(value, window.location.origin);
+      if (url.origin !== window.location.origin || url.pathname === "/file-detail.html") {
+        return "";
+      }
+      return url.pathname + url.search + url.hash;
+    } catch (error) {
+      return "";
+    }
   }
 
   async function saveMetadata(event) {

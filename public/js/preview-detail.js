@@ -191,7 +191,9 @@
       });
       var items = data.items || [];
       if (items.length > 0) {
-        grid.insertAdjacentHTML("beforeend", items.map(Webhard.mediaCard).join(""));
+        grid.insertAdjacentHTML("beforeend", items.map(function (item) {
+          return Webhard.mediaCard(item, { returnUrl: currentReturnUrl() });
+        }).join(""));
       }
       offset = data.next_offset || offset + items.length;
       hasMore = data.has_more === true;
@@ -208,5 +210,9 @@
   function isPageBottom() {
     var doc = document.documentElement;
     return window.innerHeight + window.scrollY >= doc.scrollHeight - 12;
+  }
+
+  function currentReturnUrl() {
+    return window.location.pathname + window.location.search + window.location.hash;
   }
 })();
