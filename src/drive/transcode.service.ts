@@ -108,6 +108,10 @@ export class TranscodeService implements OnModuleInit, OnModuleDestroy {
 
   async status(params: Record<string, unknown>, viewer: Viewer): Promise<Record<string, unknown>> {
     requireAdmin(viewer);
+    return this.internalStatus(params);
+  }
+
+  async internalStatus(params: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
     const limit = Math.min(Math.max(optionalNumber(params.limit) || 20, 1), 100);
     const result = await this.databaseService.query(
       `
@@ -120,7 +124,42 @@ export class TranscodeService implements OnModuleInit, OnModuleDestroy {
       `,
       [limit],
     );
-    return { items: result.rows };
+    const counts = await this.databaseService.query<{ status_cd: string; count: string }>(
+      `
+      SELECT status_cd, COUNT(*) AS count
+      FROM wh_transcode_job
+      GROUP BY status_cd
+      `,
+    );
+    const variants = await this.databaseService.query<{ quality: string; count: string }>(
+      `
+      SELECT quality, COUNT(*) AS count
+      FROM wh_transcode_variant
+      GROUP BY quality
+      `,
+    );
+    const summary = Object.fromEntries(counts.rows.map((row) => [row.status_cd, Number(row.count || 0)]));
+    const variantSummary = Object.fromEntries(variants.rows.map((row) => [row.quality, Number(row.count || 0)]));
+    const running = Number(summary.RUNNING || 0);
+    const pending = Number(summary.PENDING || 0);
+    const failed = Number(summary.FAILED || 0);
+    return {
+      status: transcodeEnabled() ? (failed > 0 ? 'DEGRADED' : 'UP') : 'DISABLED',
+      enabled: transcodeEnabled(),
+      worker_running: this.running,
+      within_window: withinTranscodeWindow(),
+      checked_at: new Date().toISOString(),
+      start_hour: positiveInt(process.env.WEBHARD_TRANSCODE_START_HOUR, 3),
+      end_hour: positiveInt(process.env.WEBHARD_TRANSCODE_END_HOUR, 6),
+      batch_size: transcodeBatchSize(),
+      daily_limit: transcodeDailyLimit(),
+      counts: summary,
+      variants: variantSummary,
+      running_count: running,
+      pending_count: pending,
+      failed_count: failed,
+      items: result.rows,
+    };
   }
 
   async runScheduledBatch(): Promise<void> {

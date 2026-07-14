@@ -8,12 +8,14 @@ import { traceId } from '../common/request-util';
 import { AdminServiceClient, CurrentUser } from '../integration/admin/admin-service.client';
 import { hasMediaAccessPermission, hasMediaPermission, isAdmin } from '../auth/permission.util';
 import { DriveService } from './drive.service';
+import { TranscodeService } from './transcode.service';
 
 @Public()
 @Controller('internal/media')
 export class InternalMediaController {
   constructor(
     private readonly driveService: DriveService,
+    private readonly transcodeService: TranscodeService,
     private readonly adminServiceClient: AdminServiceClient,
   ) {}
 
@@ -90,6 +92,12 @@ export class InternalMediaController {
   async ready(@Req() request: Request) {
     ensureInternalAccess(request);
     return ok(await this.driveService.internalMediaReady(), traceId(request));
+  }
+
+  @Post('transcode-status.json')
+  async transcodeStatus(@Body() body: Record<string, unknown> = {}, @Req() request: Request) {
+    ensureInternalAccess(request);
+    return ok(await this.transcodeService.internalStatus(body), traceId(request));
   }
 
   private async scopedBody(
