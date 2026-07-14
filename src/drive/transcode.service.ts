@@ -127,7 +127,11 @@ export class TranscodeService implements OnModuleInit, OnModuleDestroy {
     const counts = await this.databaseService.query<{ status_cd: string; count: string }>(
       `
       SELECT status_cd, COUNT(*) AS count
-      FROM wh_transcode_job
+      FROM (
+        SELECT DISTINCT ON (file_id) file_id, status_cd
+        FROM wh_transcode_job
+        ORDER BY file_id, job_id DESC
+      ) latest_job
       GROUP BY status_cd
       `,
     );
@@ -352,7 +356,7 @@ export class TranscodeService implements OnModuleInit, OnModuleDestroy {
     const targetDir = join(dirname(sourcePath), '.transcoded');
     await mkdir(targetDir, { recursive: true });
     const targetPath = join(targetDir, `${basename(sourcePath, extname(sourcePath))}.${file.file_id}.${quality}p.mp4`);
-    const tempPath = `${targetPath}.tmp-${process.pid}-${Date.now()}`;
+    const tempPath = `${targetPath}.tmp-${process.pid}-${Date.now()}.mp4`;
     await runCommand(ffmpegCommand(), [
       '-y',
       '-i',
@@ -443,7 +447,7 @@ export class TranscodeService implements OnModuleInit, OnModuleDestroy {
           updated_by = 'system'
       WHERE job_id = $1
       `,
-      [jobId, message.slice(0, 1000)],
+      [jobId, truncateMessage(message)],
     );
   }
 }
@@ -585,4 +589,11 @@ function runCommand(command: string, args: string[], timeoutMs: number): Promise
       }
     });
   });
+}
+
+function truncateMessage(message: string): string {
+  if (message.length <= 1000) {
+    return message;
+  }
+  return `${message.slice(0, 350)}\n...\n${message.slice(-600)}`;
 }
