@@ -2,7 +2,7 @@ import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { spawn } from 'child_process';
 import { createHash } from 'crypto';
 import { createReadStream, existsSync } from 'fs';
-import { mkdir, rename, stat, unlink } from 'fs/promises';
+import { mkdir, rename, rm, stat, unlink, writeFile } from 'fs/promises';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { ApiException } from '../common/api-exception';
 import { storageRoot } from '../common/storage-path';
@@ -27,8 +27,8 @@ interface JobRow {
 }
 
 const TRANSCODE_QUALITIES = [
-  { quality: '1080', maxHeight: 1080, crf: 21 },
-  { quality: '720', maxHeight: 720, crf: 23 },
+  { quality: '1080', maxHeight: 1080, crf: 21, bandwidth: 5_000_000, resolution: '1920x1080' },
+  { quality: '720', maxHeight: 720, crf: 23, bandwidth: 2_800_000, resolution: '1280x720' },
 ];
 
 @Injectable()
@@ -89,12 +89,21 @@ export class TranscodeService implements OnModuleInit, OnModuleDestroy {
           WHERE active_job.file_id = f.file_id
             AND active_job.status_cd IN ('PENDING', 'RUNNING')
         )
-        AND NOT EXISTS (
-          SELECT 1
-          FROM wh_transcode_variant v720
-          JOIN wh_transcode_variant v1080 ON v1080.file_id = f.file_id AND v1080.quality = '1080'
-          WHERE v720.file_id = f.file_id
-            AND v720.quality = '720'
+        AND (
+          NOT EXISTS (
+            SELECT 1
+            FROM wh_transcode_variant v720
+            JOIN wh_transcode_variant v1080 ON v1080.file_id = f.file_id AND v1080.quality = '1080'
+            WHERE v720.file_id = f.file_id
+              AND v720.quality = '720'
+          )
+          OR NOT EXISTS (
+            SELECT 1
+            FROM wh_hls_rendition h720
+            JOIN wh_hls_rendition h1080 ON h1080.file_id = f.file_id AND h1080.quality = '1080'
+            WHERE h720.file_id = f.file_id
+              AND h720.quality = '720'
+          )
         )
       ORDER BY f.updated_at ASC, f.file_id ASC
       LIMIT $1
@@ -142,8 +151,16 @@ export class TranscodeService implements OnModuleInit, OnModuleDestroy {
       GROUP BY quality
       `,
     );
+    const hls = await this.databaseService.query<{ quality: string; count: string }>(
+      `
+      SELECT quality, COUNT(*) AS count
+      FROM wh_hls_rendition
+      GROUP BY quality
+      `,
+    );
     const summary = Object.fromEntries(counts.rows.map((row) => [row.status_cd, Number(row.count || 0)]));
     const variantSummary = Object.fromEntries(variants.rows.map((row) => [row.quality, Number(row.count || 0)]));
+    const hlsSummary = Object.fromEntries(hls.rows.map((row) => [row.quality, Number(row.count || 0)]));
     const running = Number(summary.RUNNING || 0);
     const pending = Number(summary.PENDING || 0);
     const failed = Number(summary.FAILED || 0);
@@ -159,6 +176,7 @@ export class TranscodeService implements OnModuleInit, OnModuleDestroy {
       daily_limit: transcodeDailyLimit(),
       counts: summary,
       variants: variantSummary,
+      hls: hlsSummary,
       running_count: running,
       pending_count: pending,
       failed_count: failed,
@@ -225,9 +243,26 @@ export class TranscodeService implements OnModuleInit, OnModuleDestroy {
         CONSTRAINT uq_wh_transcode_variant UNIQUE (file_id, quality)
       )
     `);
+    await this.databaseService.query(`
+      CREATE TABLE IF NOT EXISTS wh_hls_rendition (
+        rendition_id BIGSERIAL PRIMARY KEY,
+        file_id BIGINT NOT NULL REFERENCES wh_file(file_id),
+        quality VARCHAR(20) NOT NULL,
+        master_path VARCHAR(1000) NOT NULL,
+        playlist_path VARCHAR(1000) NOT NULL,
+        segment_dir_path VARCHAR(1000) NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        created_by VARCHAR(100) NOT NULL,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_by VARCHAR(100) NOT NULL,
+        CONSTRAINT ck_wh_hls_rendition_quality CHECK (quality IN ('720', '1080')),
+        CONSTRAINT uq_wh_hls_rendition UNIQUE (file_id, quality)
+      )
+    `);
     await this.databaseService.query('CREATE INDEX IF NOT EXISTS idx_wh_transcode_job_01 ON wh_transcode_job (status_cd, created_at ASC, job_id ASC)');
     await this.databaseService.query("CREATE UNIQUE INDEX IF NOT EXISTS uq_wh_transcode_job_active ON wh_transcode_job (file_id) WHERE status_cd IN ('PENDING', 'RUNNING')");
     await this.databaseService.query('CREATE INDEX IF NOT EXISTS idx_wh_transcode_variant_01 ON wh_transcode_variant (file_id, quality)');
+    await this.databaseService.query('CREATE INDEX IF NOT EXISTS idx_wh_hls_rendition_01 ON wh_hls_rendition (file_id, quality)');
   }
 
   private async enqueueSystemPending(): Promise<void> {
@@ -245,12 +280,21 @@ export class TranscodeService implements OnModuleInit, OnModuleDestroy {
           WHERE active_job.file_id = f.file_id
             AND active_job.status_cd IN ('PENDING', 'RUNNING')
         )
-        AND NOT EXISTS (
-          SELECT 1
-          FROM wh_transcode_variant v720
-          JOIN wh_transcode_variant v1080 ON v1080.file_id = f.file_id AND v1080.quality = '1080'
-          WHERE v720.file_id = f.file_id
-            AND v720.quality = '720'
+        AND (
+          NOT EXISTS (
+            SELECT 1
+            FROM wh_transcode_variant v720
+            JOIN wh_transcode_variant v1080 ON v1080.file_id = f.file_id AND v1080.quality = '1080'
+            WHERE v720.file_id = f.file_id
+              AND v720.quality = '720'
+          )
+          OR NOT EXISTS (
+            SELECT 1
+            FROM wh_hls_rendition h720
+            JOIN wh_hls_rendition h1080 ON h1080.file_id = f.file_id AND h1080.quality = '1080'
+            WHERE h720.file_id = f.file_id
+              AND h720.quality = '720'
+          )
         )
       ORDER BY f.updated_at ASC, f.file_id ASC
       LIMIT $1
@@ -298,12 +342,16 @@ export class TranscodeService implements OnModuleInit, OnModuleDestroy {
         'UPDATE wh_transcode_job SET source_path = $2, updated_at = CURRENT_TIMESTAMP WHERE job_id = $1',
         [job.job_id, sourcePath],
       );
-      const variants = new Map<string, VariantResult>();
-      for (const spec of TRANSCODE_QUALITIES) {
-        const output = await this.transcodeVariant(file, sourcePath, spec.quality, spec.maxHeight, spec.crf);
-        variants.set(spec.quality, output);
-        await this.upsertVariant(file, output);
+      let variants = await this.loadExistingVariants(file);
+      if (!hasAllQualities(variants)) {
+        variants = new Map<string, VariantResult>();
+        for (const spec of TRANSCODE_QUALITIES) {
+          const output = await this.transcodeVariant(file, sourcePath, spec.quality, spec.maxHeight, spec.crf);
+          variants.set(spec.quality, output);
+          await this.upsertVariant(file, output);
+        }
       }
+      await this.transcodeHlsRenditions(file, variants);
       const playback = variants.get('1080');
       if (!playback) {
         throw new Error('1080p variant was not created');
@@ -326,7 +374,7 @@ export class TranscodeService implements OnModuleInit, OnModuleDestroy {
       if (resolve(sourcePath) !== resolve(playback.storagePath)) {
         await unlink(sourcePath).catch(() => undefined);
       }
-      await this.finishJob(job.job_id, 'DONE', 'transcode finished; original file deleted');
+      await this.finishJob(job.job_id, 'DONE', 'transcode finished; HLS playlists created; original file deleted');
     } catch (error) {
       await this.failJob(job.job_id, error instanceof Error ? error.message : String(error));
     }
@@ -420,6 +468,120 @@ export class TranscodeService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
+  private async loadExistingVariants(file: FileRow): Promise<Map<string, VariantResult>> {
+    const result = await this.databaseService.query<{
+      quality: string;
+      storage_path: string;
+      file_size: string;
+      content_sha256: string;
+    }>(
+      `
+      SELECT quality, storage_path, file_size, content_sha256
+      FROM wh_transcode_variant
+      WHERE file_id = $1
+        AND quality IN ('720', '1080')
+      `,
+      [file.file_id],
+    );
+    const variants = new Map<string, VariantResult>();
+    for (const row of result.rows) {
+      const storagePath = safeExistingStoragePath(row.storage_path);
+      if (!storagePath) {
+        continue;
+      }
+      variants.set(row.quality, {
+        quality: row.quality,
+        storagePath,
+        fileSize: Number(row.file_size || 0),
+        contentSha256: row.content_sha256 || await hashFile(storagePath),
+      });
+    }
+    return variants;
+  }
+
+  private async transcodeHlsRenditions(file: FileRow, variants: Map<string, VariantResult>): Promise<void> {
+    const playback = variants.get('1080') || variants.get('720');
+    if (!playback) {
+      throw new Error('HLS source variant was not created');
+    }
+    const targetBase = join(dirname(playback.storagePath), `${basename(playback.storagePath, extname(playback.storagePath))}.hls`);
+    const tempBase = `${targetBase}.tmp-${process.pid}-${Date.now()}`;
+    await rm(tempBase, { recursive: true, force: true });
+    await mkdir(tempBase, { recursive: true });
+    try {
+      const renditions: HlsRenditionResult[] = [];
+      for (const spec of TRANSCODE_QUALITIES) {
+        const variant = variants.get(spec.quality);
+        if (!variant) {
+          continue;
+        }
+        const renditionDir = join(tempBase, spec.quality);
+        await mkdir(renditionDir, { recursive: true });
+        const playlistPath = join(renditionDir, 'index.m3u8');
+        await runCommand(ffmpegCommand(), [
+          '-y',
+          '-i',
+          variant.storagePath,
+          '-map',
+          '0:v:0',
+          '-map',
+          '0:a?',
+          '-c',
+          'copy',
+          '-f',
+          'hls',
+          '-hls_time',
+          String(hlsSegmentSeconds()),
+          '-hls_playlist_type',
+          'vod',
+          '-hls_segment_filename',
+          join(renditionDir, 'segment_%05d.ts'),
+          playlistPath,
+        ], transcodeTimeoutMs());
+        const playlistStat = await stat(playlistPath);
+        if (playlistStat.size <= 0) {
+          throw new Error(`${spec.quality}p HLS playlist is empty`);
+        }
+        renditions.push({
+          quality: spec.quality,
+          masterPath: join(targetBase, 'master.m3u8'),
+          playlistPath: join(targetBase, spec.quality, 'index.m3u8'),
+          segmentDirPath: join(targetBase, spec.quality),
+          bandwidth: spec.bandwidth,
+          resolution: spec.resolution,
+        });
+      }
+      if (renditions.length === 0) {
+        throw new Error('HLS renditions were not created');
+      }
+      await writeFile(join(tempBase, 'master.m3u8'), hlsMasterPlaylist(renditions), 'utf8');
+      await rm(targetBase, { recursive: true, force: true });
+      await rename(tempBase, targetBase);
+      for (const rendition of renditions) {
+        await this.upsertHlsRendition(file, rendition);
+      }
+    } catch (error) {
+      await rm(tempBase, { recursive: true, force: true }).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  private async upsertHlsRendition(file: FileRow, rendition: HlsRenditionResult): Promise<void> {
+    await this.databaseService.query(
+      `
+      INSERT INTO wh_hls_rendition (file_id, quality, master_path, playlist_path, segment_dir_path, created_by, updated_by)
+      VALUES ($1, $2, $3, $4, $5, 'transcode-job', 'transcode-job')
+      ON CONFLICT (file_id, quality)
+      DO UPDATE SET master_path = EXCLUDED.master_path,
+                    playlist_path = EXCLUDED.playlist_path,
+                    segment_dir_path = EXCLUDED.segment_dir_path,
+                    updated_at = CURRENT_TIMESTAMP,
+                    updated_by = 'transcode-job'
+      `,
+      [file.file_id, rendition.quality, rendition.masterPath, rendition.playlistPath, rendition.segmentDirPath],
+    );
+  }
+
   private async finishJob(jobId: string, status: 'DONE' | 'SKIPPED' | 'FAILED', message: string): Promise<void> {
     await this.databaseService.query(
       `
@@ -457,6 +619,15 @@ interface VariantResult {
   storagePath: string;
   fileSize: number;
   contentSha256: string;
+}
+
+interface HlsRenditionResult {
+  quality: string;
+  masterPath: string;
+  playlistPath: string;
+  segmentDirPath: string;
+  bandwidth: number;
+  resolution: string;
 }
 
 function requireAdmin(viewer: Viewer): void {
@@ -508,6 +679,10 @@ function transcodeAudioBitrate(): string {
   return String(process.env.WEBHARD_TRANSCODE_AUDIO_BITRATE || '160k');
 }
 
+function hlsSegmentSeconds(): number {
+  return positiveInt(process.env.WEBHARD_HLS_SEGMENT_SECONDS, 4);
+}
+
 function ffmpegCommand(): string {
   return process.env.FFMPEG_PATH || 'ffmpeg';
 }
@@ -537,6 +712,19 @@ function positiveInt(value: string | undefined, fallback: number): number {
 function mp4FileName(fileName: string): string {
   const base = basename(fileName, extname(fileName)).trim() || 'video';
   return `${base}.mp4`;
+}
+
+function hlsMasterPlaylist(renditions: HlsRenditionResult[]): string {
+  const lines = ['#EXTM3U', '#EXT-X-VERSION:3'];
+  for (const rendition of renditions) {
+    lines.push(`#EXT-X-STREAM-INF:BANDWIDTH=${rendition.bandwidth},RESOLUTION=${rendition.resolution}`);
+    lines.push(`${rendition.quality}/index.m3u8`);
+  }
+  return `${lines.join('\n')}\n`;
+}
+
+function hasAllQualities(variants: Map<string, VariantResult>): boolean {
+  return TRANSCODE_QUALITIES.every((spec) => variants.has(spec.quality));
 }
 
 function safeExistingStoragePath(value: string | null | undefined, root = resolvedStorageRoot()): string | null {

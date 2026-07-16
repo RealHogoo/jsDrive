@@ -2,7 +2,7 @@ import { HttpStatus, Injectable } from '@nestjs/common';
 import { createHash, randomBytes, randomUUID, scryptSync } from 'crypto';
 import { mkdir, rename, unlink, writeFile } from 'fs/promises';
 import { createReadStream, existsSync } from 'fs';
-import { extname, isAbsolute, join, relative, resolve, sep } from 'path';
+import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'path';
 import sharp from 'sharp';
 import { ApiException } from '../common/api-exception';
 import { ApiCode } from '../common/api-code';
@@ -1039,6 +1039,64 @@ export class DriveService {
       };
     }
     throw ApiException.badRequest('invalid file kind');
+  }
+
+  async internalMediaHlsStream(params: Record<string, unknown>): Promise<{
+    storagePath: string;
+    fileName: string;
+    contentType: string;
+  }> {
+    const fileId = requiredNumber(params.file_id, 'file_id is required');
+    const viewerUserId = requiredText(params.viewer_user_id, 'viewer_user_id is required');
+    const viewerIsAdmin = Boolean(params.viewer_is_admin);
+    const allowPublic = Boolean(params.allow_public);
+    const hlsPath = safeHlsPath(requiredText(params.hls_path, 'hls_path is required'));
+    const hlsParts = hlsPath.split('/');
+    const quality = hlsParts.length > 1 ? hlsParts[0] : '';
+    const result = await this.databaseService.query<{
+      master_path: string;
+      playlist_path: string;
+      segment_dir_path: string;
+    }>(
+      `
+      SELECT r.master_path, r.playlist_path, r.segment_dir_path
+      FROM wh_file f
+      JOIN wh_hls_rendition r ON r.file_id = f.file_id
+      WHERE f.deleted_yn = 'N'
+        AND f.content_kind = 'VIDEO'
+        AND f.file_id = $1
+        AND ($2::boolean OR f.owner_user_id = $3 OR ($4::boolean AND f.media_public_yn = 'Y'))
+        AND ($5::varchar = '' OR r.quality = $5)
+      ORDER BY r.quality DESC
+      LIMIT 1
+      `,
+      [fileId, viewerIsAdmin, viewerUserId, allowPublic, quality],
+    );
+    const item = result.rows[0];
+    if (!item) {
+      throw ApiException.badRequest('HLS media file not found');
+    }
+    const rawPath = hlsPath === 'master.m3u8'
+      ? item.master_path
+      : hlsPath.endsWith('/index.m3u8')
+        ? item.playlist_path
+        : join(item.segment_dir_path, hlsParts.slice(1).join('/'));
+    const storagePath = safeExistingStoragePath(String(rawPath || ''));
+    if (!storagePath) {
+      throw ApiException.badRequest('HLS media path not found');
+    }
+    if (hlsPath !== 'master.m3u8' && !hlsPath.endsWith('/index.m3u8')) {
+      const segmentRoot = resolve(item.segment_dir_path);
+      const segmentRelative = relative(segmentRoot, storagePath);
+      if (segmentRelative === '' || segmentRelative === '..' || segmentRelative.startsWith(`..${sep}`) || isAbsolute(segmentRelative)) {
+        throw ApiException.badRequest('invalid HLS segment path');
+      }
+    }
+    return {
+      storagePath,
+      fileName: basename(storagePath),
+      contentType: hlsPath.endsWith('.m3u8') ? 'application/vnd.apple.mpegurl' : 'video/mp2t',
+    };
   }
 
   async internalRegisterYoutubeFile(params: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -2203,6 +2261,26 @@ function safeExistingStoragePath(value: string | null | undefined, root = resolv
     return null;
   }
   return existsSync(target) ? target : null;
+}
+
+function safeHlsPath(value: string): string {
+  const text = value.replace(/^\/+/, '').trim();
+  if (
+    !text ||
+    text.includes('\\') ||
+    text.split('/').some((part) => !part || part === '.' || part === '..') ||
+    (!text.endsWith('.m3u8') && !text.endsWith('.ts'))
+  ) {
+    throw ApiException.badRequest('invalid HLS path');
+  }
+  if (text === 'master.m3u8') {
+    return text;
+  }
+  const match = /^(720|1080)\/(index\.m3u8|[A-Za-z0-9._-]+\.ts)$/.exec(text);
+  if (!match) {
+    throw ApiException.badRequest('invalid HLS path');
+  }
+  return text;
 }
 
 function resolvedStorageRoot(): string {

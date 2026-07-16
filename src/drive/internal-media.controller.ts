@@ -88,6 +88,20 @@ export class InternalMediaController {
     createReadStream(file.storagePath).pipe(response);
   }
 
+  @Post('hls-stream.json')
+  async hlsStream(@Body() body: Record<string, unknown> = {}, @Req() request: Request, @Res() response: Response) {
+    ensureInternalAccess(request);
+    const scopedBody = await this.scopedBody(request, body, { allowPublicWithoutUserToken: true });
+    const file = await this.driveService.internalMediaHlsStream(scopedBody);
+    const stat = statSync(file.storagePath);
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    response.setHeader('X-Webhard-File-Name', encodeURIComponent(file.fileName || 'hls'));
+    response.setHeader('Cache-Control', file.contentType === 'video/mp2t' ? 'public, max-age=31536000, immutable' : 'no-cache');
+    response.type(file.contentType);
+    response.setHeader('Content-Length', String(stat.size));
+    createReadStream(file.storagePath).pipe(response);
+  }
+
   @Post('ready.json')
   async ready(@Req() request: Request) {
     ensureInternalAccess(request);
