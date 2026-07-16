@@ -98,6 +98,7 @@ export class InternalMediaController {
     response.setHeader('X-Webhard-File-Name', encodeURIComponent(file.fileName || 'hls'));
     response.setHeader('Cache-Control', file.contentType === 'video/mp2t' ? 'public, max-age=31536000, immutable' : 'no-cache');
     response.type(file.contentType);
+    response.status(200);
     response.setHeader('Content-Length', String(stat.size));
     createReadStream(file.storagePath).pipe(response);
   }
