@@ -73,12 +73,12 @@
     }
     return postJson("/folder/tree.json", {}).then(function (data) {
       var currentValue = selectedValue != null ? String(selectedValue) : String(select.value || "");
-      var options = ["<option value=\"\">루트</option>"].concat((data.items || []).map(function (folder) {
+      var options = [optionElement("", "루트")].concat((data.items || []).map(function (folder) {
         var value = String(folder.folder_id || "");
         var label = folder.folder_path || folder.folder_name || ("#" + value);
-        return "<option value=\"" + escapeAttr(value) + "\">" + escapeHtml(label) + "</option>";
+        return optionElement(value, label);
       }));
-      select.innerHTML = options.join("");
+      select.replaceChildren.apply(select, options);
       select.value = currentValue;
     }).catch(function () {
       return undefined;
@@ -179,7 +179,14 @@
     if (kind === "DOCUMENT") {
       return "문서";
     }
-    return String(kind || "-");
+    return "-";
+  }
+
+  function optionElement(value, label) {
+    var option = document.createElement("option");
+    option.value = String(value || "");
+    option.textContent = String(label || "");
+    return option;
   }
 
   function fileExtension(fileName) {
@@ -223,7 +230,9 @@
     postJson: postJson,
     request: request,
     kindLabel: kindLabel,
-    formatSize: formatSize
+    formatSize: formatSize,
+    escapeHtml: escapeHtml,
+    escapeAttr: escapeAttr
   };
 
   if (document.readyState === "loading") {
