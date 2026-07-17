@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { createHash } from 'crypto';
 
 export interface CurrentUser {
   user_id: string;
@@ -24,6 +25,7 @@ export class AdminServiceClient {
   );
   private readonly internalApiToken = internalApiToken();
   private readonly cache = new Map<string, CachedCurrentUser>();
+  private readonly cacheMaxEntries = authCacheMaxEntries();
 
   async fetchCurrentUser(accessToken: string): Promise<CurrentUser | null> {
     const token = accessToken.trim();
@@ -32,9 +34,13 @@ export class AdminServiceClient {
     }
 
     const now = Date.now();
-    const cached = this.cache.get(token);
+    const cacheKey = authCacheKey(token);
+    const cached = this.cache.get(cacheKey);
     if (cached && cached.expiresAtMillis > now) {
       return cloneCurrentUser(cached.currentUser);
+    }
+    if (cached) {
+      this.cache.delete(cacheKey);
     }
 
     const response = await fetch(`${this.adminServiceBaseUrl}/auth/me.json`, {
@@ -47,7 +53,7 @@ export class AdminServiceClient {
     });
 
     if (!response.ok) {
-      this.cache.delete(token);
+      this.cache.delete(cacheKey);
       return null;
     }
 
@@ -56,7 +62,7 @@ export class AdminServiceClient {
       data?: Partial<CurrentUser>;
     };
     if (body.ok !== true || !body.data || !body.data.user_id) {
-      this.cache.delete(token);
+      this.cache.delete(cacheKey);
       return null;
     }
 
@@ -66,11 +72,30 @@ export class AdminServiceClient {
       roles: Array.isArray(body.data.roles) ? body.data.roles.map(String) : [],
       service_permissions: normalizePermissions(body.data.service_permissions),
     };
-    this.cache.set(token, {
+    this.pruneCache(now);
+    this.cache.set(cacheKey, {
       currentUser,
       expiresAtMillis: now + 5000,
     });
     return cloneCurrentUser(currentUser);
+  }
+
+  private pruneCache(now = Date.now()): void {
+    for (const [key, value] of this.cache) {
+      if (value.expiresAtMillis <= now) {
+        this.cache.delete(key);
+      }
+    }
+    const overflow = this.cache.size - this.cacheMaxEntries + 1;
+    if (overflow <= 0) {
+      return;
+    }
+    const oldest = [...this.cache.entries()]
+      .sort((left, right) => left[1].expiresAtMillis - right[1].expiresAtMillis)
+      .slice(0, overflow);
+    for (const [key] of oldest) {
+      this.cache.delete(key);
+    }
   }
 
   async fetchServiceStatus(_accessToken: string | null | undefined, serviceCode: string): Promise<ServiceStatus | null> {
@@ -138,6 +163,15 @@ function normalizePermissions(raw: unknown): Record<string, string[]> {
 
 function normalizeCode(value: string): string {
   return value.trim().replace(/[- ]/g, '_').toUpperCase();
+}
+
+function authCacheKey(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
+}
+
+function authCacheMaxEntries(): number {
+  const parsed = Number(process.env.ADMIN_AUTH_CACHE_MAX_ENTRIES || '500');
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 500;
 }
 
 function serviceRegistryCode(value: string): string {
