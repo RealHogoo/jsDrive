@@ -35,6 +35,40 @@
 | `WEBHARD_TRASH_RETENTION_DAYS` | `30` | 휴지통 보존 기간 |
 | `TRUST_FORWARDED_HEADERS` | `false` | 신뢰 프록시 헤더 사용 여부 |
 
+## 영상 변환/HLS 설정
+
+트랜스코딩은 웹하드 저장소의 영상 파일을 대상으로 수행한다. 미디어 서비스는 결과물만 내부 API로 받아 프록시한다.
+
+| 변수 | 기본값 | 설명 |
+| --- | --- | --- |
+| `WEBHARD_TRANSCODE_ENABLED` | `true` | 자동 트랜스코딩 사용 여부 |
+| `WEBHARD_TRANSCODE_START_HOUR` | `3` | 시작 시각, 서버 로컬 시간 기준 |
+| `WEBHARD_TRANSCODE_END_HOUR` | `6` | 종료 시각, 서버 로컬 시간 기준 |
+| `WEBHARD_TRANSCODE_DAILY_LIMIT` | `20` | 하루 자동 등록 최대 건수 |
+| `WEBHARD_TRANSCODE_BATCH_SIZE` | `1` | 한 번에 처리할 작업 수 |
+| `WEBHARD_TRANSCODE_TIMEOUT_SECONDS` | `7200` | ffmpeg 작업 제한 시간 |
+| `WEBHARD_TRANSCODE_PRESET` | `veryfast` | ffmpeg x264 preset |
+| `WEBHARD_TRANSCODE_AUDIO_BITRATE` | `160k` | AAC 오디오 비트레이트 |
+| `WEBHARD_HLS_SEGMENT_SECONDS` | `4` | HLS segment 길이 |
+
+상태 확인:
+
+```http
+POST /transcode/status.json
+POST /internal/media/transcode-status.json
+```
+
+수동 등록:
+
+```http
+POST /transcode/file/start.json
+{
+  "file_id": 123
+}
+```
+
+자동 등록은 이미 720p/1080p variant와 HLS rendition이 모두 있는 파일을 건너뛴다. 실패한 작업은 상태와 메시지를 남기며, 같은 파일에 `PENDING` 또는 `RUNNING` 작업이 있으면 중복 등록하지 않는다.
+
 ## 보안 설정
 
 - 운영 환경에서는 `APP_ENV=prod` 또는 `production`을 사용한다.
@@ -108,3 +142,5 @@ DB와 파일 저장소는 같은 시점에 맞춰 백업해야 한다. 시점이
 - 공유 링크 실패: 만료일, 다운로드 횟수, 비밀번호 설정 확인
 - 주간 ZIP 실패: 파일 수/용량 제한과 download job 상태 확인
 - 내부 미디어 연동 실패: 내부 토큰, 허용 IP/CIDR, media-service 호출 로그 확인
+- HLS 재생 실패: `wh_hls_rendition` 존재 여부, playlist/segment 파일 존재 여부, `POST /internal/media/hls-stream.json` 응답 확인
+- 변환 실패: `wh_transcode_job.message`, ffmpeg 경로, 저장소 쓰기 권한, 디스크 여유 공간 확인
