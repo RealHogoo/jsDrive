@@ -6,7 +6,7 @@ import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'pat
 import sharp from 'sharp';
 import { ApiException } from '../common/api-exception';
 import { ApiCode } from '../common/api-code';
-import { safePathSegment, storageRoot } from '../common/storage-path';
+import { safePathSegment, storageHealth, storageRoot } from '../common/storage-path';
 import { createImageThumbnail, createVideoThumbnail } from '../common/thumbnail';
 import { uploadLimits } from '../common/upload-limit';
 import { DatabaseService } from '../database/database.service';
@@ -1160,9 +1160,13 @@ export class DriveService {
 
   async internalMediaReady(): Promise<Record<string, unknown>> {
     await this.databaseService.ping();
+    const storage = storageHealth();
+    if (storage.status !== 'UP') {
+      throw ApiException.badRequest('webhard storage is not available');
+    }
     return {
       database: 'ready',
-      storage_root: storageRoot(),
+      storage,
     };
   }
 

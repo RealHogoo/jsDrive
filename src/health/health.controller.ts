@@ -1,6 +1,7 @@
-import { Controller, Post } from '@nestjs/common';
+import { Controller, Post, ServiceUnavailableException } from '@nestjs/common';
 import { Public } from '../auth/public.decorator';
 import { ok } from '../common/api-response';
+import { storageHealth } from '../common/storage-path';
 import { DatabaseService } from '../database/database.service';
 
 @Controller('health')
@@ -17,7 +18,17 @@ export class HealthController {
   @Post('ready.json')
   async ready() {
     await this.databaseService.ping();
-    return ok({ status: 'UP', service: serviceId(), db: 'UP' });
+    const storage = storageHealth();
+    if (storage.status !== 'UP') {
+      throw new ServiceUnavailableException({
+        ok: false,
+        code: 'STORAGE_UNAVAILABLE',
+        message: 'webhard storage is not available',
+        data: { status: 'DOWN', service: serviceId(), db: 'UP', storage },
+        trace_id: null,
+      });
+    }
+    return ok({ status: 'UP', service: serviceId(), db: 'UP', storage });
   }
 
   @Public()
@@ -29,10 +40,12 @@ export class HealthController {
     } catch (_exception) {
       db = 'DOWN';
     }
+    const storage = storageHealth();
     return ok({
-      status: db === 'UP' ? 'UP' : 'DOWN',
+      status: db === 'UP' && storage.status === 'UP' ? 'UP' : 'DOWN',
       service: serviceId(),
       db,
+      storage,
     });
   }
 }
